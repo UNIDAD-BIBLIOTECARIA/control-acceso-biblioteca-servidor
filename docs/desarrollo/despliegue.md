@@ -31,6 +31,7 @@ Editar `.env` (ver tabla completa de variables más abajo). Como mínimo hay que
 
 - `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `MYSQL_ROOT_PASSWORD`
 - `SECRET_KEY` — **obligatoria**, viene vacía en el ejemplo (`openssl rand -hex 32`)
+- `SERVER_BIND_IP` — **obligatoria en producción** (`docker-compose.prod.yml` no arranca sin ella): IP de la PC maestra en la LAN de los kioscos
 - `KIOSK_API_KEY` — opcional, solo como respaldo mientras se migran PCs a una key propia (ver más abajo); dejarla vacía cierra esa vía de respaldo
 
 `ADMIN_PASS_HASH` trae un valor de EJEMPLO (contraseña `cambiar-esta-contrasena`, pública en este repo) que el servidor **rechaza** al sembrar el admin inicial — dejarlo tal cual deja el panel sin ningún administrador. Generar un hash propio sin exponer la contraseña a quien despliega:
@@ -49,7 +50,7 @@ docker compose up -d --build
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-El backend queda disponible en `http://localhost:8000`, el panel en `http://localhost:8000/` o `/panel`.
+En desarrollo el backend queda disponible en `http://localhost:8000`, el panel en `http://localhost:8000/` o `/panel`.
 
 ### Datos de demostración (opcional)
 
@@ -82,6 +83,7 @@ uvicorn main:app --reload
 | `DB_SSL_CA` | No | Ruta *dentro del contenedor* a un CA cert para cifrar la conexión servidor→MySQL. Sin efecto mientras `db` y `servidor` compartan la red interna de Compose (caso por defecto); solo hace falta si la base de datos se aloja fuera de esa red (managed DB en la nube, otra máquina) — puede colocarse dentro de `/certs`, reutilizando el mismo volumen que `TLS_CERTS_DIR`. |
 | `SECRET_KEY` | Sí | Firma de los JWT. Viene vacía en `.env.example` — si se deja vacía (o ausente), el servidor **aborta al arrancar** con `RuntimeError` (`_require_env` en `servidor/routers/auth.py`); no existe ningún fallback ni JWT firmado con secreto vacío. Generar con `openssl rand -hex 32`. |
 | `KIOSK_API_KEY` | No | Respaldo compartido del header `X-Kiosk-Key`, solo se usa cuando una PC todavía no tiene su propia key (ver "API key de cada PC" abajo); cada uso queda registrado en los logs con advertencia. Una PC que ya tiene key propia no acepta la clave compartida, y con ella cada PC solo puede escribir sus propios datos. Si queda vacía, ese respaldo queda siempre cerrado y todas las PCs deben tener su key propia generada desde el panel. |
+| `SERVER_BIND_IP` | Sí (solo producción) | IP del host en la que `docker-compose.prod.yml` publica el puerto `8000` (p. ej. la IP de la PC maestra en la LAN de los kioscos, `192.168.1.10`). Si falta, `docker compose` se niega a levantar el stack. Existe porque Docker publica los puertos con reglas de iptables propias que **se saltan UFW/firewalld**: publicado en `0.0.0.0`, un `ufw deny 8000` no impediría llegar a la API desde otras redes del host (Wi-Fi de invitados, otra NIC, VPN). Con `127.0.0.1` solo es accesible desde el propio host (útil si todo el tráfico entra por un proxy/túnel local). El compose de desarrollo no la usa. |
 | `CORS_ORIGINS` | No | Orígenes separados por coma para acceso cross-origin. Vacío = sin CORS extra (el panel se sirve desde el mismo origen que la API). |
 | `LOGIN_MAX_INTENTOS` | No | Default 5. Intentos fallidos de `/auth/login` antes de bloquear temporalmente la IP. |
 | `LOGIN_BLOQUEO_MINUTOS` | No | Default 15. Minutos de bloqueo tras exceder `LOGIN_MAX_INTENTOS`. |
@@ -174,7 +176,7 @@ Los backups tienen la misma PII de estudiantes que la base — guardarlos fuera 
 
 ## Observabilidad
 
-Más allá del `HEALTHCHECK` de Docker (que solo dice si el proceso responde), `GET /metrics` expone métricas en formato Prometheus (conteo y latencia de requests por endpoint/método/status — nada de negocio ni PII). Apagado por defecto; activarlo con `ENABLE_METRICS=true` en el `.env`. Sin autenticación propia — si se activa en producción, restringir el acceso a nivel de red (firewall, o que solo el scraper de Prometheus llegue a ese puerto).
+Más allá del `HEALTHCHECK` de Docker (que solo dice si el proceso responde), `GET /metrics` expone métricas en formato Prometheus (conteo y latencia de requests por endpoint/método/status — nada de negocio ni PII). Apagado por defecto; activarlo con `ENABLE_METRICS=true` en el `.env`. Sin autenticación propia — si se activa en producción, restringir el acceso a nivel de red (`SERVER_BIND_IP` y, si hace falta, reglas en la cadena `DOCKER-USER` de iptables, no UFW/firewalld, que Docker se salta) para que solo el scraper de Prometheus llegue a ese puerto.
 
 ## Checklist de seguridad antes de producción
 
@@ -182,6 +184,7 @@ Más allá del `HEALTHCHECK` de Docker (que solo dice si el proceso responde), `
 - [ ] Cada PC tiene su propia API key generada desde el panel (pestaña "PCs" → "Generar API key") en vez de depender de `KIOSK_API_KEY`; esta última solo debería estar rellena mientras dure la migración de PCs existentes.
 - [ ] `ADMIN_PASS_HASH` propio (no el de ejemplo — el servidor lo rechaza igual, pero conviene no depender de eso).
 - [ ] Desplegado con `docker-compose.prod.yml`, no con el de desarrollo (evita `--reload` y exponer el puerto de MySQL).
+- [ ] `SERVER_BIND_IP` fijada a la IP de la interfaz de la LAN de los kioscos, y comprobado desde una red que no debería tener acceso (p. ej. Wi-Fi de invitados) que el puerto `8000` no responde. No confiar solo en UFW/firewalld para eso: Docker se los salta con sus propias reglas de iptables. Si hace falta filtrar además por IP de origen dentro de esa LAN, usar la cadena `DOCKER-USER` de iptables.
 - [ ] `CORS_ORIGINS` configurado solo si el panel se sirve desde un origen distinto a la API (no es necesario por defecto).
 - [ ] `TLS_CERT_PATH`/`TLS_KEY_PATH` configuradas (ver sección **TLS**) y `ca.pem` distribuido a los 16 kioscos — si se decide operar sin TLS a propósito, confirmar que cada `config.ini` tiene `permitir_http_inseguro = true` fijado conscientemente, no por omisión.
 - [ ] Si se expone fuera de la red local, hacerlo vía túnel Cloudflare (`cloudflared/`) en lugar de abrir puertos directamente, con `BEHIND_HTTPS_PROXY=true` para que la cookie de sesión del panel lleve `Secure` y se envíe HSTS.
@@ -194,7 +197,7 @@ Más allá del `HEALTHCHECK` de Docker (que solo dice si el proceso responde), `
 Este servidor es la mitad "PC maestra": corre en **una sola PC** de la sala (o una máquina/VM dedicada), y cada una de las PCs de la sala corre `biblioteca_cliente` como kiosko, hablándole a este servidor por la red local. No hay descubrimiento automático: cada kiosko necesita saber, de antemano, la IP (o dominio) de la PC maestra, configurada a mano una vez en `setup.py`/`config.ini` de esa PC.
 
 - **Transporte**: HTTP(S) sobre el puerto `8000` (el que publica `docker-compose*.yml`). El cliente (`cliente/network/`) es un consumidor REST/JSON normal (`requests`), no hay WebSockets ni un protocolo propio.
-- **Red**: todas las PCs deben estar en la misma LAN que la PC maestra (o alcanzarla por VPN/túnel) y el firewall de la PC maestra debe permitir entrantes al puerto `8000` desde esa LAN — no hace falta abrir nada hacia internet salvo que se use el túnel Cloudflare opcional para el panel.
+- **Red**: todas las PCs deben estar en la misma LAN que la PC maestra (o alcanzarla por VPN/túnel) y el puerto `8000` debe estar publicado en la IP de la PC maestra en esa LAN (`SERVER_BIND_IP`, ver tabla de variables). Ojo: el firewall del host (UFW/firewalld) no controla los puertos que publica Docker, así que no sirve para restringirlo; para filtrar por origen, usar la cadena `DOCKER-USER` de iptables — no hace falta abrir nada hacia internet salvo que se use el túnel Cloudflare opcional para el panel.
 - **Identidad de cada PC**: cada kiosko tiene un `PC_ID` (UUID4, generado una vez por `setup.py` en `.pc_id`) que lo identifica de forma estable ante el servidor, independiente de hostname/MAC/IP (que pueden cambiar).
 - **Autenticación kiosko→servidor**: cada request del kiosko (`POST /sync`, `POST /estado`, `POST/GET/PUT /estudiantes`, `POST /pcs/{id}/hardware`) manda dos headers: `X-PC-Id` (el UUID de esa PC) y `X-Kiosk-Key` (su API key). El servidor valida la key contra el hash guardado en `pcs.api_key_hash` para ese `pc_id` exacto (`require_kiosk_or_admin` + `verificar_pc_id` en `servidor/routers/auth.py`) — una PC no puede autenticarse con el `PC_ID` de otra, ni usar la key de otra. La key se genera **desde el panel admin** (pestaña "PCs" → "Generar API key", requiere el `PC_ID` que `setup.py` mostró en esa PC) y se ve una única vez.
 - **Autenticación admin→servidor**: distinta de la anterior. El panel web usa login usuario/contraseña (`POST /auth/login`) y un JWT guardado en cookie `HttpOnly`, no la API key de ninguna PC.
@@ -207,10 +210,10 @@ Este servidor es la mitad "PC maestra": corre en **una sola PC** de la sala (o u
 
 1. Elegir qué máquina de la sala (o servidor/VM dedicado) hará de PC maestra y anotar su **IP en la LAN** (`ip a` / `ipconfig`) — todas las PCs hijas se configurarán apuntando a esa IP.
 2. Instalar Docker + Docker Compose en esa máquina si no los tiene.
-3. Clonar/copiar este repo (`biblioteca_servidor`) ahí y seguir la sección **Opción recomendada: Docker Compose** de arriba: `.env`, `SECRET_KEY`, `ADMIN_PASS_HASH` propio, `KIOSK_API_KEY` opcional.
+3. Clonar/copiar este repo (`biblioteca_servidor`) ahí y seguir la sección **Opción recomendada: Docker Compose** de arriba: `.env`, `SECRET_KEY`, `ADMIN_PASS_HASH` propio, `SERVER_BIND_IP` con la IP anotada en el paso 1, `KIOSK_API_KEY` opcional.
 4. Decidir si se usará TLS (recomendado). Si sí: correr `servidor/scripts/generar_ca.sh <IP-de-la-PC-maestra>` **ahora**, antes de configurar las PCs hijas, y completar `TLS_CERT_PATH`/`TLS_KEY_PATH` en el `.env` — ver sección **TLS** arriba.
 5. Levantar con `docker compose -f docker-compose.prod.yml up -d --build`.
-6. Verificar que responde: `curl http://<IP-PC-maestra>:8000/health` (o `curl -k https://<IP>:8000/health` con TLS) desde otra PC de la misma LAN — si no responde, revisar firewall de la PC maestra (puerto `8000` entrante) antes de seguir.
+6. Verificar que responde: `curl http://<IP-PC-maestra>:8000/health` (o `curl -k https://<IP>:8000/health` con TLS) desde otra PC de la misma LAN — si no responde, revisar que `SERVER_BIND_IP` sea la IP correcta de esa interfaz (`docker compose -f docker-compose.prod.yml port servidor 8000`) antes de seguir.
 7. Entrar al panel (`http://<IP-PC-maestra>:8000/`), iniciar sesión con `ADMIN_USER`/la contraseña usada para generar `ADMIN_PASS_HASH`, y cambiarla desde el panel (botón "Cambiar contraseña").
 
 ### Fase 2 — cada PC hija (kiosko)

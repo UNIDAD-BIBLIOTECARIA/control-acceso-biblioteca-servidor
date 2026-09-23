@@ -17,6 +17,13 @@
 # ca.key (la clave privada de la CA): el script la deja aparte, en ./ca, y el
 # entrypoint aborta si la encuentra montada.
 #
+# El puerto 8000 se publica solo en la IP de la LAN que indique SERVER_BIND_IP
+# (obligatoria), no en 0.0.0.0: Docker inserta sus propias reglas de iptables
+# para los puertos publicados y esas reglas se saltan UFW/firewalld, así que
+# un `ufw deny 8000` en el host NO bloquea el acceso. Atando el puerto a una
+# sola interfaz, la API no queda expuesta en otras redes del host (Wi-Fi de
+# invitados, otra NIC, VPN) aunque el operador crea que el firewall la cubre.
+#
 # Uso:
 #   docker compose -f docker-compose.prod.yml up -d --build
 #
@@ -53,7 +60,7 @@ services:
     build: ./servidor
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "${SERVER_BIND_IP:?definir SERVER_BIND_IP en .env (IP de la PC maestra en la LAN de los kioscos)}:8000:8000"
     depends_on:
       db:
         condition: service_healthy
