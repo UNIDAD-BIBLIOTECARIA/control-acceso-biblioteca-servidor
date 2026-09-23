@@ -35,6 +35,7 @@ env/
 # clave privada del servidor) — nunca se versionan, se generan una vez por
 # despliegue. Ver docs/desarrollo/despliegue.md, sección TLS.
 certs/
+/ca/
 
 # Logs
 *.log

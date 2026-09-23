@@ -13,7 +13,9 @@
 # volumen de solo lectura en /certs; si TLS_CERT_PATH/TLS_KEY_PATH apuntan
 # ahí adentro, docker-entrypoint.sh le pasa --ssl-certfile/--ssl-keyfile a
 # uvicorn. Generar esos archivos con servidor/scripts/generar_ca.sh — ver
-# docs/desarrollo/despliegue.md, sección TLS.
+# docs/desarrollo/despliegue.md, sección TLS. Ese directorio NO debe contener
+# ca.key (la clave privada de la CA): el script la deja aparte, en ./ca, y el
+# entrypoint aborta si la encuentra montada.
 #
 # Uso:
 #   docker compose -f docker-compose.prod.yml up -d --build

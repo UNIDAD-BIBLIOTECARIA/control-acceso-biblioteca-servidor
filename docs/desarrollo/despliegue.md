@@ -90,7 +90,7 @@ uvicorn main:app --reload
 | `SYNC_MAX_SESIONES` | No | Default 100. Máximo de sesiones por lote en `POST /sync`. |
 | `ENABLE_API_DOCS` | No | Default deshabilitado. En `true`/`1`/`yes` habilita `/docs`, `/redoc` y `/openapi.json` (documentación interactiva de la API, sin autenticación). Dejar apagado en producción; solo activar para desarrollo local o debugging puntual. |
 | `TLS_CERT_PATH` / `TLS_KEY_PATH` | No (recomendado) | Rutas *dentro del contenedor* al certificado/clave del servidor. Vacías = uvicorn sirve HTTP plano. Ver sección **TLS** abajo. |
-| `TLS_CERTS_DIR` | No | Default `./certs`. Carpeta en el **host** que `docker-compose.prod.yml` monta en `/certs` (solo lectura) dentro del contenedor — ahí es donde deben estar los archivos que apuntan `TLS_CERT_PATH`/`TLS_KEY_PATH`. |
+| `TLS_CERTS_DIR` | No | Default `./certs`. Carpeta en el **host** que `docker-compose.prod.yml` monta en `/certs` (solo lectura) dentro del contenedor — ahí es donde deben estar los archivos que apuntan `TLS_CERT_PATH`/`TLS_KEY_PATH`. **Nunca** debe contener `ca.key` (el contenedor aborta si la encuentra). |
 | `BEHIND_HTTPS_PROXY` | No (sí si se usa el túnel) | Default deshabilitado. En `true`/`1`/`yes` indica que el panel se publica por HTTPS a través de un proxy/túnel que termina TLS delante de este servidor (p. ej. Cloudflare Tunnel), así que a uvicorn le llega HTTP plano. Fuerza `Secure` en las cookies de sesión del panel (`access_token`, `csrf_token`) y activa HSTS, que de otro modo solo se activan con `TLS_CERT_PATH`/`TLS_KEY_PATH`. Con esto activo el panel solo se puede usar por la URL HTTPS: por `http://<ip-lan>:8000` el navegador descarta las cookies y el login no se mantiene. No afecta a los kioscos (se autentican por header, no por cookie). |
 | `UVICORN_WORKERS` | No | No se usa para nada (`docker-entrypoint.sh` nunca le agrega `--workers` a uvicorn): existe solo para que, si alguien la fija en un valor distinto de `1` pensando en escalar el servicio, el contenedor aborte al arrancar en vez de correr con el rate limiting de `servidor/routers/auth.py` roto en silencio (ver más abajo). |
 
@@ -105,14 +105,16 @@ cd servidor
 ./scripts/generar_ca.sh 192.168.x.x      # IP real de la PC maestra en la LAN
 ```
 
-Esto crea, en `<raíz del repo>/certs/` (junto a este `docker-compose.prod.yml`, gitignored — **nunca se versiona**):
+Esto crea dos directorios en la raíz del repo (junto a este `docker-compose.prod.yml`, ambos gitignored — **nunca se versionan**):
 
 | Archivo | Qué es | A dónde va |
 |---|---|---|
-| `ca.key` | Clave privada de la CA | Guardarla offline (USB, gestor de contraseñas). No hace falta en el servidor una vez generado `server.pem`. |
-| `ca.pem` | Certificado público de la CA | Copiar a `cliente/ca.pem` en **cada uno de los 16 kioscos** — `config.ini` → `[servidor] ca_cert`. |
-| `server.key` | Clave privada del servidor | Queda en la PC maestra. `TLS_KEY_PATH` en el `.env`. |
-| `server.pem` | Certificado del servidor, firmado por la CA | `TLS_CERT_PATH` en el `.env`. |
+| `ca/ca.key` | Clave privada de la CA | Guardarla offline (USB, gestor de contraseñas) y **borrarla de la PC maestra**. Nunca copiarla a `certs/`: ese directorio se monta dentro del contenedor, y con esta clave cualquiera que lo comprometa podría firmar certificados que los 16 kioscos aceptarían como del servidor. El contenedor se niega a arrancar si la encuentra ahí. Solo hace falta de nuevo para renovar el certificado del servidor. |
+| `ca/ca.pem`, `certs/ca.pem` | Certificado público de la CA (misma copia) | Copiar a `cliente/ca.pem` en **cada uno de los 16 kioscos** — `config.ini` → `[servidor] ca_cert`. |
+| `certs/server.key` | Clave privada del servidor | Queda en la PC maestra. `TLS_KEY_PATH` en el `.env`. |
+| `certs/server.pem` | Certificado del servidor, firmado por la CA | `TLS_CERT_PATH` en el `.env`. |
+
+Los directorios se pueden cambiar con el segundo y tercer argumento (`generar_ca.sh <host> [directorio-certs] [directorio-ca]`); el script rechaza que sean el mismo.
 
 En el `.env` del servidor:
 
@@ -123,7 +125,7 @@ TLS_KEY_PATH=/certs/server.key
 
 (`/certs` es la ruta *dentro del contenedor* — `docker-compose.prod.yml` monta `TLS_CERTS_DIR`, default `./certs`, ahí adentro.) Al levantar `docker compose -f docker-compose.prod.yml up -d --build` con esas variables configuradas, `servidor/docker-entrypoint.sh` le agrega automáticamente `--ssl-certfile`/`--ssl-keyfile` a `uvicorn`.
 
-El certificado del servidor vence en ~825 días (2.25 años) — no hay renovación automática como con una CA pública, calendarizarla (volver a correr `generar_ca.sh` reusando la misma CA, o el script completo si también hace falta rotar la CA).
+El certificado del servidor vence en ~825 días (2.25 años) — no hay renovación automática como con una CA pública, calendarizarla con `renovar_cert_servidor.sh` (reusa la misma CA), o `generar_ca.sh` si también hace falta rotar la CA.
 
 `servidor/scripts/verificar_vencimiento_cert.sh` avisa (código de salida != 0) cuando el certificado de servidor o la CA están a menos de 60 días de vencer, para no depender de acordarse manualmente. Agregarlo a cron en la PC maestra (semanal, por ejemplo):
 
@@ -131,7 +133,7 @@ El certificado del servidor vence en ~825 días (2.25 años) — no hay renovaci
 0 8 * * 1 cd /ruta/al/repo && ./servidor/scripts/verificar_vencimiento_cert.sh >> /var/log/biblioteca-certs.log 2>&1
 ```
 
-Renovar (certificado de servidor solamente, reusando la CA existente — no hace falta redistribuir nada a los kioscos):
+Renovar (certificado de servidor solamente, reusando la CA existente — no hace falta redistribuir nada a los kioscos). Necesita `ca.key`: traerla del respaldo offline a `ca/` (o pasar su directorio como tercer argumento) y retirarla otra vez al terminar:
 
 ```bash
 cd servidor
@@ -139,7 +141,7 @@ cd servidor
 docker compose -f ../docker-compose.prod.yml restart servidor
 ```
 
-(Si en cambio hace falta rotar también la CA, borrar `certs/ca.key`/`ca.pem` a mano y correr `generar_ca.sh` de nuevo — eso sí exige redistribuir el `ca.pem` nuevo a los 16 kioscos.)
+(Si en cambio hace falta rotar también la CA, borrar `ca/ca.key`/`ca/ca.pem` a mano y correr `generar_ca.sh` de nuevo — eso sí exige redistribuir el `ca.pem` nuevo a los 16 kioscos.)
 
 `docker-compose.yml` (desarrollo) no necesita nada de esto: corre sobre `localhost`, que sí está permitido en `http://` sin restricción.
 

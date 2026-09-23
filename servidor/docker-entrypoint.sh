@@ -26,6 +26,18 @@ if [ -n "${UVICORN_WORKERS:-}" ] && [ "${UVICORN_WORKERS}" != "1" ]; then
     exit 1
 fi
 
+# La clave privada de la CA interna nunca debe estar al alcance del contenedor:
+# quien lo comprometa podría firmar certificados que los kioscos aceptarían
+# como del servidor. scripts/generar_ca.sh la deja fuera del directorio de
+# certs que monta docker-compose.prod.yml; si aparece acá es que alguien la
+# copió por error.
+for ca_key in /certs/ca.key "$(dirname "${TLS_KEY_PATH:-/certs/x}")/ca.key"; do
+    if [ -e "$ca_key" ]; then
+        echo "Se encontró la clave privada de la CA ($ca_key) dentro del contenedor. Sacala del directorio de certs montado (TLS_CERTS_DIR) y guardala offline; el servidor solo necesita server.key/server.pem. Abortando." >&2
+        exit 1
+    fi
+done
+
 if [ "$#" -gt 0 ]; then
     exec "$@"
 fi
