@@ -95,11 +95,16 @@ KIOSK_API_KEY = os.environ.get("KIOSK_API_KEY", "")
 # patrón, FastAPI rechaza esa URL con 422 antes de que el endpoint corra.
 PcId = Annotated[str, Path(pattern=PC_ID_PATTERN)]
 
-# Mismo criterio que `SecurityHeadersMiddleware` en `main.py` para decidir si manda HSTS:
-# la cookie de sesión del panel (`_set_auth_cookies`) solo lleva `Secure` si este proceso
-# sirve TLS él mismo. Si el TLS lo termina un proxy delante de este proceso, hay que forzar
-# `Secure` ahí (o exponer esa config acá) — ver `docs/desarrollo/despliegue.md`.
-_TLS_ACTIVO = bool(os.environ.get("TLS_CERT_PATH")) and bool(os.environ.get("TLS_KEY_PATH"))
+# El panel se sirve por HTTPS si este proceso termina TLS él mismo (`TLS_CERT_PATH`/
+# `TLS_KEY_PATH`) o si lo termina un proxy/túnel delante (`BEHIND_HTTPS_PROXY`, p. ej.
+# Cloudflare Tunnel: el navegador habla HTTPS con Cloudflare pero a este proceso le llega
+# HTTP plano, así que sin esta variable no habría forma de saberlo desde acá). Decide si la
+# cookie de sesión del panel (`_set_auth_cookies`) lleva `Secure` y si
+# `SecurityHeadersMiddleware` (`main.py`) manda HSTS — sin eso, la cookie del admin viajaría
+# en claro si el navegador llega a pedir `http://` al dominio público.
+_TLS_PROPIO = bool(os.environ.get("TLS_CERT_PATH")) and bool(os.environ.get("TLS_KEY_PATH"))
+_HTTPS_POR_PROXY = os.environ.get("BEHIND_HTTPS_PROXY", "").strip().lower() in ("1", "true", "yes")
+HTTPS_ACTIVO = _TLS_PROPIO or _HTTPS_POR_PROXY
 
 # Métodos que cambian estado: los únicos donde `_verificar_csrf` exige el header
 # X-CSRF-Token cuando la autenticación vino de la cookie del panel (ver más abajo).
@@ -256,11 +261,11 @@ def _set_auth_cookies(response: Response, token: str, csrf_token: str) -> None:
     `csrf_token` no lo es, porque el panel sí necesita leerla para reenviarla como header en
     escrituras (ver `_verificar_csrf`) — no es sensible por sí sola, solo sirve junto con la
     cookie HttpOnly. `SameSite=Strict` porque el panel nunca necesita que viaje en un request
-    de origen distinto; `Secure` según `_TLS_ACTIVO`."""
+    de origen distinto; `Secure` según `HTTPS_ACTIVO`."""
     max_age = TOKEN_EXPIRE_HOURS * 3600
-    response.set_cookie("access_token", token, httponly=True, secure=_TLS_ACTIVO,
+    response.set_cookie("access_token", token, httponly=True, secure=HTTPS_ACTIVO,
                          samesite="strict", max_age=max_age, path="/")
-    response.set_cookie("csrf_token", csrf_token, httponly=False, secure=_TLS_ACTIVO,
+    response.set_cookie("csrf_token", csrf_token, httponly=False, secure=HTTPS_ACTIVO,
                          samesite="strict", max_age=max_age, path="/")
 
 

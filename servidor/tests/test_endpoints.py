@@ -64,6 +64,13 @@ def test_respuestas_incluyen_cabeceras_de_seguridad(client):
     assert "Strict-Transport-Security" not in r.headers
 
 
+def test_hsts_se_envia_si_el_https_lo_termina_un_proxy(client, monkeypatch):
+    # BEHIND_HTTPS_PROXY: el TLS lo termina un túnel delante y a uvicorn le llega HTTP.
+    monkeypatch.setattr(auth_module, "HTTPS_ACTIVO", True)
+    r = client.get("/health")
+    assert "max-age=" in r.headers["Strict-Transport-Security"]
+
+
 # --- POST /auth/login / logout / me --------------------------------------
 
 def test_login_exitoso_devuelve_token_y_cookies_httponly_con_samesite(client, monkeypatch):
@@ -78,6 +85,21 @@ def test_login_exitoso_devuelve_token_y_cookies_httponly_con_samesite(client, mo
     assert "HttpOnly" in access_cookie
     assert "samesite=strict" in access_cookie.lower()
     assert "HttpOnly" not in csrf_cookie  # el panel necesita leerla para reenviarla (X-CSRF-Token)
+    # Sin TLS propio ni BEHIND_HTTPS_PROXY en los tests: la cookie no puede ser `Secure`
+    # o el navegador la descartaría al servirse por HTTP.
+    assert "; secure" not in access_cookie.lower()
+
+
+def test_login_detras_de_proxy_https_marca_las_cookies_como_secure(client, monkeypatch):
+    monkeypatch.setattr(db_admins, "obtener_hash", lambda username: ADMIN_HASH)
+    monkeypatch.setattr(auth_module, "HTTPS_ACTIVO", True)
+    r = _login(client)
+    assert r.status_code == 200
+
+    set_cookie = r.headers.get_list("set-cookie")
+    for nombre in ("access_token=", "csrf_token="):
+        cookie = next(c for c in set_cookie if c.startswith(nombre))
+        assert "; secure" in cookie.lower()
 
 
 def test_login_con_password_incorrecta_devuelve_401(client, monkeypatch):

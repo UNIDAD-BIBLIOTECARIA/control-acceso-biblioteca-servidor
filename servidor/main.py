@@ -57,9 +57,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     acotado a esos dos orígenes. No hay estilos ni scripts inline en
     `panel/index.html`/`*.js` (todo `element.textContent`/`escapeHtml()`),
     así que no hace falta `'unsafe-inline'` en ningún directiva.
-    HSTS solo se envía si el propio proceso tiene TLS habilitado
-    (`TLS_CERT_PATH`/`TLS_KEY_PATH`) — anunciarlo sirviendo HTTP
-    plano sería una promesa falsa al navegador.
+    HSTS solo se envía si el panel se sirve por HTTPS, sea porque el
+    propio proceso tiene TLS habilitado (`TLS_CERT_PATH`/`TLS_KEY_PATH`)
+    o porque lo termina un proxy delante (`BEHIND_HTTPS_PROXY`) — ver
+    `auth.HTTPS_ACTIVO`. Anunciarlo sirviendo HTTP plano sería una
+    promesa falsa al navegador.
     """
 
     _CSP = (
@@ -79,7 +81,6 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         "camera=(), microphone=(), geolocation=(), usb=(), payment=(), "
         "accelerometer=(), gyroscope=(), magnetometer=()"
     )
-    _TLS_ACTIVO = bool(os.environ.get("TLS_CERT_PATH")) and bool(os.environ.get("TLS_KEY_PATH"))
 
     async def dispatch(self, request, call_next):
         response = await call_next(request)
@@ -88,7 +89,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Content-Security-Policy"] = self._CSP
         response.headers["Permissions-Policy"] = self._PERMISSIONS_POLICY
-        if self._TLS_ACTIVO:
+        if auth.HTTPS_ACTIVO:
             response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
         return response
 
