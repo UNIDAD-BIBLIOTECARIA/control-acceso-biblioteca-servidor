@@ -204,6 +204,20 @@ def test_cambiar_password_por_bearer_no_exige_csrf(client, monkeypatch, admin_si
     assert r.status_code == 200
 
 
+def test_cambiar_password_rechaza_contrasena_publicada_en_el_repo(client, monkeypatch, admin_sin_revocacion):
+    monkeypatch.setattr(db_admins, "obtener_hash", lambda username: ADMIN_HASH)
+    actualizadas = []
+    monkeypatch.setattr(db_admins, "actualizar_password", lambda username, nuevo_hash: actualizadas.append(username))
+    token = auth_module.create_token({"sub": "admin", "role": "admin", "csrf": "irrelevante-por-bearer"})
+    r = client.put(
+        "/auth/password",
+        json={"password_actual": ADMIN_PASSWORD, "password_nueva": "biblioteca2026"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 422
+    assert actualizadas == []
+
+
 # --- POST /sync: X-Kiosk-Key + X-PC-Id, y A1 (verificar_pc_id) -----------
 
 def test_sync_sin_credencial_da_401(client):

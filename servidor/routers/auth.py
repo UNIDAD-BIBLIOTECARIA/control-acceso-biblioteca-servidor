@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from typing import Annotated, Optional
 
 import jwt
+from contrasenas_publicadas import es_contrasena_publicada
 from db import admins as db_admins
 from db import pcs as db_pcs
 from fastapi import (
@@ -522,6 +523,11 @@ def cambiar_password(req: CambiarPasswordRequest, response: Response, usuario: d
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="La nueva contraseña debe tener al menos 8 caracteres",
+        )
+    if es_contrasena_publicada(req.password_nueva):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Esa contraseña está publicada en el repositorio del proyecto; elegí otra",
         )
     db_admins.actualizar_password(username, generar_hash(req.password_nueva))
     log.info("Contraseña de administrador '%s' actualizada", username)

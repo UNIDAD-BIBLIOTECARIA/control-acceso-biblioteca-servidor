@@ -3,6 +3,7 @@ from contextlib import contextmanager
 
 import pymysql
 import pymysql.cursors
+from contrasenas_publicadas import es_contrasena_publicada
 
 
 def _require_env(name: str) -> str:
@@ -21,6 +22,12 @@ DB_HOST = os.environ.get("DB_HOST", "localhost")
 DB_PORT = int(os.environ.get("DB_PORT", "3306"))
 DB_USER = _require_env("DB_USER")
 DB_PASSWORD = _require_env("DB_PASSWORD")
+if es_contrasena_publicada(DB_PASSWORD):
+    raise RuntimeError(
+        "DB_PASSWORD es una contraseña que ya se publicó en el historial del repo público y "
+        "debe considerarse conocida. Fija una nueva (p. ej. `openssl rand -hex 24`) en el .env "
+        "y cámbiala también en MySQL antes de iniciar el servidor."
+    )
 DB_NAME = os.environ.get("DB_NAME", "biblioteca")
 
 # Ruta (dentro del contenedor) a un certificado CA para cifrar la conexión a

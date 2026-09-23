@@ -3,6 +3,8 @@ import os
 import re
 from datetime import datetime
 
+from contrasenas_publicadas import es_hash_de_contrasena_publicada
+
 from .connection import conexion
 
 log = logging.getLogger("uvicorn.error")
@@ -177,6 +179,13 @@ def _sembrar_admin_inicial(conn):
             "'cambiar-esta-contrasena'), publicado en un repo público de GitHub — "
             "no se creó el administrador inicial. Generá tu propio hash con "
             "'python3 servidor/generar_hash_admin.py' y fijalo en el .env real."
+        )
+        return
+    if es_hash_de_contrasena_publicada(password_hash):
+        log.error(
+            "ADMIN_PASS_HASH corresponde a una contraseña que ya se publicó en el historial "
+            "del repo público — no se creó el administrador inicial. Generá un hash de una "
+            "contraseña nueva con 'python3 servidor/generar_hash_admin.py'."
         )
         return
 
