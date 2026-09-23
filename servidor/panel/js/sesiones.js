@@ -43,12 +43,22 @@ const Sesiones = {
             s.carnet||'Invitado', s.nombre||'', s.carrera||'', s.facultad||'',
             s.pc_nombre||s.pc_id||'', s.hora_inicio, s.hora_fin||'', s.minutos??''
         ]);
-        const csv = [headers, ...rows].map(r => r.map(c => `"${c}"`).join(',')).join('\n');
+        const csv = [headers, ...rows].map(r => r.map(c => this._celdaCSV(c)).join(',')).join('\r\n');
         const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
         a.download = `sesiones_${fecha}.csv`;
         a.click();
+    },
+
+    // Campos como el nombre los escribe el propio estudiante en el kiosko, así que no son
+    // de fiar: se duplican las comillas para no romper la fila y, si el texto empieza por
+    // un carácter que Excel/LibreOffice interpretan como fórmula (= + - @, tab o CR), se
+    // antepone un apóstrofo para que se muestre como texto y no se ejecute.
+    _celdaCSV(valor) {
+        let s = String(valor ?? '');
+        if (typeof valor === 'string' && /^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+        return `"${s.replace(/"/g, '""')}"`;
     },
 
     _elapsed(hora_inicio) {
