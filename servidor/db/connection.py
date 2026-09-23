@@ -31,6 +31,14 @@ DB_NAME = os.environ.get("DB_NAME", "biblioteca")
 # proveedor de la base de datos.
 DB_SSL_CA = os.environ.get("DB_SSL_CA") or None
 
+# Sin timeouts, PyMySQL espera indefinidamente a un MySQL colgado (no caído:
+# el socket sigue abierto pero no responde) y cada request atrapado ocupa un
+# hilo del threadpool de FastAPI hasta agotarlo. Con ellos, la consulta falla
+# con un 500 en segundos y el hilo se libera.
+DB_CONNECT_TIMEOUT = int(os.environ.get("DB_CONNECT_TIMEOUT") or 5)
+DB_READ_TIMEOUT = int(os.environ.get("DB_READ_TIMEOUT") or 10)
+DB_WRITE_TIMEOUT = int(os.environ.get("DB_WRITE_TIMEOUT") or 10)
+
 
 class ConnectionWrapper:
     """Envuelve la conexion de pymysql para exponer conn.execute(), como sqlite3."""
@@ -60,7 +68,7 @@ class ConnectionWrapper:
         self._conn.close()
 
 
-def get_connection():
+def get_connection(connect_timeout=None, read_timeout=None, write_timeout=None):
     ssl_args = {"ssl_ca": DB_SSL_CA, "ssl_verify_cert": True} if DB_SSL_CA else {}
     conn = pymysql.connect(
         host=DB_HOST,
@@ -70,9 +78,23 @@ def get_connection():
         database=DB_NAME,
         cursorclass=pymysql.cursors.DictCursor,
         autocommit=False,
+        connect_timeout=connect_timeout or DB_CONNECT_TIMEOUT,
+        read_timeout=read_timeout or DB_READ_TIMEOUT,
+        write_timeout=write_timeout or DB_WRITE_TIMEOUT,
         **ssl_args,
     )
     return ConnectionWrapper(conn)
+
+
+def ping(timeout=2):
+    """`SELECT 1` con timeouts cortos, para `/health/ready`. Lanza excepción si
+    MySQL no responde a tiempo; tiene que caber dentro del `--timeout` del
+    HEALTHCHECK del Dockerfile."""
+    conn = get_connection(connect_timeout=timeout, read_timeout=timeout, write_timeout=timeout)
+    try:
+        conn.execute("SELECT 1")
+    finally:
+        conn.close()
 
 
 @contextmanager

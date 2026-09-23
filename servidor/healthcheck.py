@@ -3,7 +3,9 @@
 
 Un `uvicorn` colgado (sin crashear) no se detecta con `restart: unless-stopped`
 porque el proceso sigue "vivo" aunque no responda. Este script pega a
-`/health` y le da a Docker una señal real de si el proceso sigue sirviendo.
+`/health/ready` y le da a Docker una señal real de si el proceso sigue
+sirviendo: esa ruta además hace `SELECT 1` contra MySQL, así que una base de
+datos colgada también deja el contenedor "unhealthy".
 
 Respeta TLS_CERT_PATH/TLS_KEY_PATH (ver docker-entrypoint.sh): si están
 configuradas, uvicorn sirve HTTPS en el mismo puerto y hay que pegarle con
@@ -17,7 +19,7 @@ import sys
 import urllib.request
 
 scheme = "https" if os.environ.get("TLS_CERT_PATH") else "http"
-url = f"{scheme}://localhost:8000/health"
+url = f"{scheme}://localhost:8000/health/ready"
 
 ctx = None
 if scheme == "https":
@@ -26,7 +28,7 @@ if scheme == "https":
     ctx.verify_mode = ssl.CERT_NONE
 
 try:
-    # url es fija (localhost:8000/health), no viene de input externo.
+    # url es fija (localhost:8000/health/ready), no viene de input externo.
     with urllib.request.urlopen(url, timeout=3, context=ctx) as resp:  # nosec B310
         sys.exit(0 if resp.status == 200 else 1)
 except Exception:

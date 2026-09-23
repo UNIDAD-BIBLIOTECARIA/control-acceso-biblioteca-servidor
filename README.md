@@ -97,7 +97,8 @@ Auth mixta: el kiosko necesita leer/crear/actualizar por carnet (login, auto-reg
 - `GET /reportes/estadisticas?desde&hasta` → agregados por día, hora, carrera, facultad, sexo, PC (rango por defecto: últimos 30 días).
 
 ### Otros
-- `GET /health` → `{"status": "ok"}`.
+- `GET /health` → `{"status": "ok"}`. Solo comprueba que el proceso responde (el kiosko la usa para detectar si hay red).
+- `GET /health/ready` → `{"status": "ok", "db": "ok"}`, o 503 si MySQL no responde en 2 s. Es la que usa el `HEALTHCHECK` del contenedor.
 - `GET /` y `/panel/*` → sirven el panel web estático.
 
 ## Lógica de negocio no obvia

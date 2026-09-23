@@ -83,7 +83,8 @@ No hay sistema formal de migraciones (Alembic, etc.): los cambios de esquema son
 | `GET` | `/reportes/pcs-activas` | 🔒 | PCs con `ultima_conexion` en últimos 5 min |
 | `GET` | `/reportes/resumen-dia` | 🔒 | Totales del día |
 | `GET` | `/reportes/estadisticas` | 🔒 | Agregados por día/hora/carrera/facultad/sexo/PC, `desde`/`hasta` (default: últimos 30 días) |
-| `GET` | `/health` | pública | `{"status": "ok"}` |
+| `GET` | `/health` | pública | `{"status": "ok"}` (liveness, no toca MySQL) |
+| `GET` | `/health/ready` | pública | `SELECT 1` contra MySQL; 503 si no responde. Usada por el `HEALTHCHECK` |
 | `GET` | `/`, `/panel/*` | pública | Sirve el panel web estático |
 
 Nota: `routers/pcs.py` y `routers/hardware.py` comparten el prefijo `/pcs` con tags distintos (intencional, las subrutas no colisionan); ambos exigen auth (`pcs.py` vía `require_auth`, `hardware.py` vía `require_kiosk_or_admin`).

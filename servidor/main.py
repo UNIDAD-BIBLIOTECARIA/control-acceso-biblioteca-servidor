@@ -1,13 +1,17 @@
+import logging
 import os
 
+from db import connection as db_connection
 from db import init_db
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from observabilidad import MetricsMiddleware, metrics_payload
 from routers import auth, estado, estudiantes, hardware, pcs, reportes, sync
 from starlette.middleware.base import BaseHTTPMiddleware
+
+log = logging.getLogger(__name__)
 
 ENABLE_API_DOCS = os.environ.get("ENABLE_API_DOCS", "").strip().lower() in ("1", "true", "yes")
 # GET /metrics (Prometheus) -- apagado por defecto, igual que ENABLE_API_DOCS:
@@ -140,4 +144,19 @@ def startup():
 
 @app.get("/health")
 def health():
+    """Liveness: solo dice que uvicorn responde. El kiosko la usa para saber si
+    hay red con el servidor, así que no depende de MySQL."""
     return {"status": "ok"}
+
+
+@app.get("/health/ready")
+def health_ready():
+    """Readiness: además comprueba que MySQL responde. La usa el HEALTHCHECK del
+    contenedor, para que un MySQL colgado marque el servicio como unhealthy en
+    vez de dejarlo "healthy" mientras todas las demás rutas fallan."""
+    try:
+        db_connection.ping()
+    except Exception:
+        log.exception("Health check: la base de datos no responde")
+        return JSONResponse({"status": "error", "db": "unavailable"}, status_code=503)
+    return {"status": "ok", "db": "ok"}

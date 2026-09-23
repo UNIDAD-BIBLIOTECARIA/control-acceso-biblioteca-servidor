@@ -71,6 +71,33 @@ def test_hsts_se_envia_si_el_https_lo_termina_un_proxy(client, monkeypatch):
     assert "max-age=" in r.headers["Strict-Transport-Security"]
 
 
+# --- /health y /health/ready -----------------------------------------------
+
+def test_health_no_depende_de_la_base_de_datos(client, monkeypatch):
+    # El kiosko usa /health para saber si hay red: no debe fallar por MySQL.
+    def db_caida():
+        raise AssertionError("/health no debe tocar la base de datos")
+    monkeypatch.setattr(main.db_connection, "ping", db_caida)
+    r = client.get("/health")
+    assert r.status_code == 200
+
+
+def test_health_ready_ok_si_la_base_de_datos_responde(client, monkeypatch):
+    monkeypatch.setattr(main.db_connection, "ping", lambda: None)
+    r = client.get("/health/ready")
+    assert r.status_code == 200
+    assert r.json() == {"status": "ok", "db": "ok"}
+
+
+def test_health_ready_da_503_si_la_base_de_datos_no_responde(client, monkeypatch):
+    def db_caida():
+        raise TimeoutError("timed out")
+    monkeypatch.setattr(main.db_connection, "ping", db_caida)
+    r = client.get("/health/ready")
+    assert r.status_code == 503
+    assert r.json()["db"] == "unavailable"
+
+
 # --- POST /auth/login / logout / me --------------------------------------
 
 def test_login_exitoso_devuelve_token_y_cookies_httponly_con_samesite(client, monkeypatch):
