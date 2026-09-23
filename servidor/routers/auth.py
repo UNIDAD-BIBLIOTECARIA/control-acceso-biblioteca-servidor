@@ -125,8 +125,8 @@ def hash_api_key(api_key: str) -> str:
 LOGIN_MAX_INTENTOS = int(os.environ.get("LOGIN_MAX_INTENTOS") or 5)
 LOGIN_BLOQUEO_SEGUNDOS = int(os.environ.get("LOGIN_BLOQUEO_MINUTOS") or 15) * 60
 
-# IPs de proxies/túneles de confianza (p. ej. Cloudflare Tunnel) que pueden anteponer
-# X-Forwarded-For con la IP real del cliente. Sin esto, cualquier cliente podría falsificar
+# IPs de proxies/túneles de confianza (p. ej. Cloudflare Tunnel) que pueden añadir al final
+# de X-Forwarded-For la IP real del cliente. Sin esto, cualquier cliente podría falsificar
 # el header para esquivar el rate limit, así que por defecto (lista vacía) nunca se confía
 # en él y se usa siempre la IP de la conexión TCP directa.
 TRUSTED_PROXIES = {ip.strip() for ip in os.environ.get("TRUSTED_PROXIES", "").split(",") if ip.strip()}
@@ -147,15 +147,24 @@ LECTURAS_ESTUDIANTE_MAX_POR_MINUTO = int(os.environ.get("ESTUDIANTES_MAX_LECTURA
 
 def _client_ip(request: Request) -> str:
     """IP real del cliente para el rate limiting de login. Si la conexión TCP directa viene
-    de una IP listada en TRUSTED_PROXIES, se confía en X-Forwarded-For (primer valor, el
-    cliente original); si no, se usa la IP directa. Evita que, detrás de un reverse proxy o
-    túnel no configurado como confiable, todas las conexiones legítimas compartan una sola
-    IP y un atacante bloquee a todos los administradores con un único origen."""
+    de una IP listada en TRUSTED_PROXIES, se recorre X-Forwarded-For de derecha a izquierda
+    saltando los proxies de confianza y se usa la primera IP que no lo sea; si no, se usa
+    la IP directa. Evita que, detrás de un reverse proxy o túnel no configurado como
+    confiable, todas las conexiones legítimas compartan una sola IP y un atacante bloquee a
+    todos los administradores con un único origen.
+
+    No se usa el primer valor del header: los proxies (Cloudflare incluido) *añaden* la IP
+    que ven al final de un X-Forwarded-For que ya puede traer el cliente, así que todo lo
+    que queda a la izquierda de la última IP añadida por un proxy de confianza lo controla
+    el atacante, y bastaría con cambiarlo en cada intento para esquivar el bloqueo."""
     directa = request.client.host if request.client else "desconocida"
-    if directa in TRUSTED_PROXIES:
-        xff = request.headers.get("X-Forwarded-For")
-        if xff:
-            return xff.split(",")[0].strip()
+    if directa not in TRUSTED_PROXIES:
+        return directa
+    xff = request.headers.get("X-Forwarded-For", "")
+    ips = [ip.strip() for ip in xff.split(",") if ip.strip()]
+    for ip in reversed(ips):
+        if ip not in TRUSTED_PROXIES:
+            return ip
     return directa
 
 

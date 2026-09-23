@@ -91,6 +91,53 @@ def test_purgar_intentos_expirados_no_borra_un_bloqueo_todavia_vigente():
     assert "203.0.113.11" in auth._intentos_fallidos
 
 
+# --- _client_ip ------------------------------------------------------------
+
+_PROXY = "127.0.0.1"
+
+
+def test_client_ip_ignora_xff_si_la_conexion_no_viene_de_un_proxy_de_confianza(monkeypatch):
+    monkeypatch.setattr(auth, "TRUSTED_PROXIES", {_PROXY})
+    request = make_request(ip="203.0.113.5", headers={"X-Forwarded-For": "198.51.100.1"})
+    assert auth._client_ip(request) == "203.0.113.5"
+
+
+def test_client_ip_usa_la_ip_que_anade_el_proxy_y_no_la_que_manda_el_cliente(monkeypatch):
+    # El proxy añade la IP real al final de un X-Forwarded-For que ya trae el
+    # cliente: el primer valor es falsificable, el último es el fiable.
+    monkeypatch.setattr(auth, "TRUSTED_PROXIES", {_PROXY})
+    request = make_request(ip=_PROXY, headers={"X-Forwarded-For": "1.2.3.4, 198.51.100.7"})
+    assert auth._client_ip(request) == "198.51.100.7"
+
+
+def test_client_ip_salta_varios_proxies_de_confianza_encadenados(monkeypatch):
+    monkeypatch.setattr(auth, "TRUSTED_PROXIES", {_PROXY, "10.0.0.2"})
+    request = make_request(ip=_PROXY, headers={"X-Forwarded-For": "1.2.3.4, 198.51.100.7, 10.0.0.2"})
+    assert auth._client_ip(request) == "198.51.100.7"
+
+
+def test_client_ip_sin_xff_usa_la_ip_del_proxy(monkeypatch):
+    monkeypatch.setattr(auth, "TRUSTED_PROXIES", {_PROXY})
+    assert auth._client_ip(make_request(ip=_PROXY)) == _PROXY
+
+
+def test_login_no_se_esquiva_cambiando_x_forwarded_for_en_cada_intento(monkeypatch):
+    monkeypatch.setattr(auth, "TRUSTED_PROXIES", {_PROXY})
+    monkeypatch.setattr(auth.db_admins, "obtener_hash", lambda username: None)
+    req = LoginRequest(username="nadie", password="x")
+    ip_real = "198.51.100.20"
+    for i in range(auth.LOGIN_MAX_INTENTOS):
+        request = make_request(ip=_PROXY, headers={"X-Forwarded-For": f"1.2.3.{i}, {ip_real}"})
+        with pytest.raises(HTTPException) as exc:
+            auth.login(req, request, Response())
+        assert exc.value.status_code == 401
+
+    request = make_request(ip=_PROXY, headers={"X-Forwarded-For": f"1.2.3.99, {ip_real}"})
+    with pytest.raises(HTTPException) as exc:
+        auth.login(req, request, Response())
+    assert exc.value.status_code == 429
+
+
 # --- limitar_lecturas_estudiante / limitar_escrituras_kiosko -------------
 #
 # Estructuralmente idénticos (mismo dict de ventanas deslizantes, mismo
