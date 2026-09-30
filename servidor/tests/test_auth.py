@@ -48,9 +48,10 @@ def test_generar_hash_usa_un_salt_distinto_cada_vez():
 
 # --- _token_revocado -----------------------------------------------------
 
-def test_token_revocado_si_falta_sub_o_iat():
+def test_token_revocado_si_falta_sub_iat_o_jti():
     assert auth._token_revocado({}) is True
     assert auth._token_revocado({"sub": "admin"}) is True
+    assert auth._token_revocado({"sub": "admin", "iat": 0}) is True
 
 
 def test_token_revocado_si_el_usuario_ya_no_existe(monkeypatch):
@@ -61,7 +62,7 @@ def test_token_revocado_si_el_usuario_ya_no_existe(monkeypatch):
 
 def test_token_revocado_false_si_el_password_no_cambio_despues_del_iat(monkeypatch):
     monkeypatch.setattr(auth.db_admins, "obtener_actualizado", lambda username: datetime(2000, 1, 1))
-    payload = {"sub": "admin", "iat": auth.calendar.timegm(datetime(2020, 1, 1).timetuple())}
+    payload = {"sub": "admin", "iat": auth.calendar.timegm(datetime(2020, 1, 1).timetuple()), "jti": "abc"}
     assert auth._token_revocado(payload) is False
 
 
@@ -69,8 +70,21 @@ def test_token_revocado_true_si_el_password_cambio_despues_del_iat(monkeypatch):
     # Simula el caso central de PUT /auth/password: el token se emitió antes
     # del cambio, así que debe quedar revocado aunque no haya expirado.
     monkeypatch.setattr(auth.db_admins, "obtener_actualizado", lambda username: datetime(2020, 1, 2))
-    payload = {"sub": "admin", "iat": auth.calendar.timegm(datetime(2020, 1, 1).timetuple())}
+    payload = {"sub": "admin", "iat": auth.calendar.timegm(datetime(2020, 1, 1).timetuple()), "jti": "abc"}
     assert auth._token_revocado(payload) is True
+
+
+def test_token_revocado_true_si_su_jti_se_dio_de_baja_en_logout(monkeypatch, tokens_revocados):
+    monkeypatch.setattr(auth.db_admins, "obtener_actualizado", lambda username: datetime(2000, 1, 1))
+    payload = {"sub": "admin", "iat": auth.calendar.timegm(datetime(2020, 1, 1).timetuple()), "jti": "abc"}
+    tokens_revocados.add("abc")
+    assert auth._token_revocado(payload) is True
+
+
+def test_create_token_asigna_un_jti_distinto_a_cada_token():
+    a = auth.jwt.decode(auth.create_token({"sub": "admin"}), auth.SECRET_KEY, algorithms=[auth.ALGORITHM])
+    b = auth.jwt.decode(auth.create_token({"sub": "admin"}), auth.SECRET_KEY, algorithms=[auth.ALGORITHM])
+    assert a["jti"] and b["jti"] and a["jti"] != b["jti"]
 
 
 # --- verify_token ---------------------------------------------------------

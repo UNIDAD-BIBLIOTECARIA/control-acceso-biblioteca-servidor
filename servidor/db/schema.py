@@ -112,6 +112,12 @@ def init_db():
                 ultima_lectura DATETIME,
                 CONSTRAINT fk_pcs_hardware_pc FOREIGN KEY (pc_id) REFERENCES pcs(pc_id)
             ) ENGINE=InnoDB;
+
+            CREATE TABLE IF NOT EXISTS tokens_revocados (
+                jti VARCHAR(64) PRIMARY KEY,
+                expira DATETIME NOT NULL,
+                INDEX idx_tokens_revocados_expira (expira)
+            ) ENGINE=InnoDB;
         """)
         conn.commit()
 

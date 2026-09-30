@@ -63,7 +63,7 @@ No hay sistema formal de migraciones (Alembic, etc.): los cambios de esquema son
 | Método | Ruta | Auth | Descripción |
 |---|---|---|---|
 | `POST` | `/auth/login` | pública | `{username, password}` → `{access_token, token_type}` + cookies `access_token`/`csrf_token` |
-| `POST` | `/auth/logout` | pública | Limpia las cookies `access_token`/`csrf_token` |
+| `POST` | `/auth/logout` | pública | Revoca el JWT recibido (cookie o Bearer) hasta su expiración y limpia las cookies `access_token`/`csrf_token` |
 | `GET` | `/auth/me` | 🔒 | `{"username": ...}` — usado por el panel para saber si la sesión (cookie) sigue viva |
 | `PUT` | `/auth/password` | 🔒 | Cambiar contraseña propia del admin autenticado |
 | `POST` | `/sync` | 🔒 kiosko o admin | Recibe lote de sesiones offline-first (upsert idempotente) |

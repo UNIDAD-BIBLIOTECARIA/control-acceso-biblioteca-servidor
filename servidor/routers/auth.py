@@ -5,7 +5,7 @@ import logging
 import os
 import secrets
 import time
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Optional
 
 import jwt
@@ -216,6 +216,7 @@ def _registrar_intento_fallido(ip: str) -> None:
 def create_token(data: dict) -> str:
     payload = data.copy()
     payload["iat"] = datetime.utcnow()
+    payload["jti"] = secrets.token_urlsafe(16)
     payload["exp"] = datetime.utcnow() + timedelta(hours=TOKEN_EXPIRE_HOURS)
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
@@ -227,15 +228,22 @@ def _token_revocado(payload: dict) -> bool:
     filtrado (XSS, malware, red sin TLS): seguía siendo válido hasta que expirara solo, sin
     importar la contraseña nueva. Compara siempre en UTC calculado en Python (ver
     `db/admins.py::actualizar_password`) para no depender de la zona horaria del servidor
-    de MySQL."""
+    de MySQL.
+
+    También queda revocado si su `jti` se dio de baja en `POST /auth/logout`: sin eso,
+    cerrar sesión solo borraba las cookies del navegador y una copia del token (el Bearer
+    de un script, o una cookie robada antes) seguía valiendo hasta su `exp`."""
     username = payload.get("sub")
     emitido = payload.get("iat")
-    if username is None or emitido is None:
+    jti = payload.get("jti")
+    if username is None or emitido is None or jti is None:
         return True
     actualizado = db_admins.obtener_actualizado(username)
     if actualizado is None:
         return True  # el admin ya no existe (o nunca existió)
-    return emitido < calendar.timegm(actualizado.timetuple())
+    if emitido < calendar.timegm(actualizado.timetuple()):
+        return True
+    return db_admins.jti_revocado(jti)
 
 
 def verify_token(token: str) -> dict:
@@ -246,7 +254,7 @@ def verify_token(token: str) -> dict:
     if payload.get("role") == "admin" and _token_revocado(payload):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Sesión invalidada por un cambio de contraseña, inicia sesión de nuevo",
+            detail="Sesión cerrada o invalidada, inicia sesión de nuevo",
         )
     return payload
 
@@ -481,12 +489,33 @@ def login(req: LoginRequest, request: Request, response: Response):
     return Token(access_token=token, token_type="bearer")  # nosec B106
 
 
+def _revocar_token(token: str) -> None:
+    """Da de baja el `jti` de `token` hasta su `exp`. Si el token no verifica (firma mala,
+    ya expirado) no hay nada que revocar: tampoco lo aceptaría `verify_token`."""
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except jwt.InvalidTokenError:
+        return
+    jti, exp = payload.get("jti"), payload.get("exp")
+    if payload.get("role") != "admin" or jti is None or exp is None:
+        return
+    expira = datetime.fromtimestamp(exp, UTC).replace(tzinfo=None)
+    db_admins.revocar_token(jti, expira)
+
+
 @router.post("/logout")
-def logout(response: Response):
-    """Limpia las cookies de sesión del panel (`access_token`, `csrf_token`). No exige estar
-    autenticado ni un `X-CSRF-Token` válido: en el peor caso un logout forzado por CSRF solo
-    cierra una sesión ajena, no compromete ni expone nada, así que no vale la pena la
-    fricción adicional acá."""
+def logout(request: Request, response: Response,
+           credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme)):
+    """Revoca en el servidor el JWT con el que se llama (por `Authorization: Bearer` o por la
+    cookie `access_token`) y limpia las cookies de sesión del panel. Borrar solo las cookies
+    no bastaba: el token seguía siendo válido hasta su `exp` para quien tuviera una copia.
+
+    No exige estar autenticado ni un `X-CSRF-Token` válido: en el peor caso un logout forzado
+    por CSRF solo cierra una sesión ajena, no compromete ni expone nada, así que no vale la
+    pena la fricción adicional acá."""
+    token = credentials.credentials if credentials is not None else request.cookies.get("access_token")
+    if token:
+        _revocar_token(token)
     response.delete_cookie("access_token", path="/")
     response.delete_cookie("csrf_token", path="/")
     return {"ok": True}

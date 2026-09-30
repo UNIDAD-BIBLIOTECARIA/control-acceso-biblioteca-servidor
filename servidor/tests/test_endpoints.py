@@ -170,6 +170,41 @@ def test_flujo_cookie_login_me_logout(client, monkeypatch, admin_sin_revocacion)
     assert client.get("/auth/me").status_code == 401
 
 
+def test_logout_revoca_el_token_aunque_se_reuse_por_bearer(client, monkeypatch, admin_sin_revocacion):
+    # Cerrar sesión no puede limitarse a borrar la cookie: quien tenga una
+    # copia del JWT (robada, o el Bearer de un script) no debe poder seguir
+    # usándolo hasta que expire.
+    monkeypatch.setattr(db_admins, "obtener_hash", lambda username: ADMIN_HASH)
+    token = _login(client).json()["access_token"]
+    assert client.post("/auth/logout").status_code == 200
+
+    r = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 401
+
+
+def test_logout_por_bearer_revoca_ese_token(client, admin_sin_revocacion, tokens_revocados):
+    token = auth_module.create_token({"sub": "admin", "role": "admin", "csrf": "x"})
+    headers = {"Authorization": f"Bearer {token}"}
+    assert client.post("/auth/logout", headers=headers).status_code == 200
+    assert len(tokens_revocados) == 1
+    assert client.get("/auth/me", headers=headers).status_code == 401
+
+
+def test_logout_no_revoca_las_otras_sesiones_del_mismo_admin(client, admin_sin_revocacion):
+    otra = auth_module.create_token({"sub": "admin", "role": "admin", "csrf": "x"})
+    actual = auth_module.create_token({"sub": "admin", "role": "admin", "csrf": "x"})
+    client.post("/auth/logout", headers={"Authorization": f"Bearer {actual}"})
+    r = client.get("/auth/me", headers={"Authorization": f"Bearer {otra}"})
+    assert r.status_code == 200
+
+
+def test_logout_sin_token_o_con_token_invalido_responde_200_sin_revocar(client, tokens_revocados):
+    assert client.post("/auth/logout").status_code == 200
+    r = client.post("/auth/logout", headers={"Authorization": "Bearer esto-no-es-un-jwt"})
+    assert r.status_code == 200
+    assert tokens_revocados == set()
+
+
 # --- PUT /auth/password: CSRF de doble-submit solo para sesión por cookie -
 
 def test_cambiar_password_por_cookie_sin_csrf_header_da_403(client, monkeypatch, admin_sin_revocacion):

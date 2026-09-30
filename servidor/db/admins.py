@@ -29,3 +29,20 @@ def actualizar_password(username, nuevo_hash):
             (nuevo_hash, datetime.utcnow(), username),
         )
         conn.commit()
+
+
+def revocar_token(jti, expira):
+    """Registra el JWT `jti` como revocado hasta `expira` (UTC, el `exp` del propio token).
+    Pasada esa fecha el token ya no verifica por sí solo, así que no hace falta guardarlo
+    más: se aprovecha cada inserción para purgar las entradas vencidas y que la tabla no
+    crezca con cada logout."""
+    with conexion() as conn:
+        conn.execute("DELETE FROM tokens_revocados WHERE expira < %s", (datetime.utcnow(),))
+        conn.execute("INSERT IGNORE INTO tokens_revocados (jti, expira) VALUES (%s, %s)", (jti, expira))
+        conn.commit()
+
+
+def jti_revocado(jti):
+    with conexion() as conn:
+        row = conn.execute("SELECT 1 FROM tokens_revocados WHERE jti = %s", (jti,)).fetchone()
+        return row is not None

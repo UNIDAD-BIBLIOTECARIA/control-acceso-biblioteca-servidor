@@ -47,3 +47,17 @@ def _limpiar_contadores_de_rate_limiting():
     auth._intentos_fallidos.clear()
     auth._lecturas_estudiante.clear()
     auth._escrituras_kiosko.clear()
+
+
+@pytest.fixture(autouse=True)
+def tokens_revocados(monkeypatch):
+    """Doble en memoria de la tabla `tokens_revocados`: `verify_token` consulta
+    `db_admins.jti_revocado` en cada JWT de admin y `POST /auth/logout` llama a
+    `db_admins.revocar_token`, así que sin esto cualquier test que autentique
+    como admin o cierre sesión abriría una conexión real a MySQL. Devuelve el
+    set de `jti` revocados para que un test pueda inspeccionarlo."""
+    from db import admins as db_admins
+    revocados = set()
+    monkeypatch.setattr(db_admins, "jti_revocado", lambda jti: jti in revocados)
+    monkeypatch.setattr(db_admins, "revocar_token", lambda jti, expira: revocados.add(jti))
+    return revocados
