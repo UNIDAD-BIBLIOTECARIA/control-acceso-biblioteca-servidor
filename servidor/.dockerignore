@@ -16,3 +16,11 @@ venv/
 # empacada en la imagen.
 certs/
 ca/
+# Herramientas de desarrollo que no deben ir en la imagen de producción.
+# seed_demo.py borra todas las tablas con --reset; en desarrollo se sigue
+# pudiendo usar porque docker-compose.yml monta ./servidor como volumen.
+seed_demo.py
+tests/
+pytest.ini
+requirements-dev.txt
+scripts/

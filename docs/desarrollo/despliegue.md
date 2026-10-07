@@ -78,8 +78,8 @@ uvicorn main:app --reload
 |---|---|---|
 | `ADMIN_USER` | Sí | Usuario admin inicial. Solo se usa una vez para sembrar el primer administrador en la BD si la tabla `admins` está vacía; después el admin cambia su contraseña desde el panel y este valor deja de importar. |
 | `ADMIN_PASS_HASH` | Sí | Hash PBKDF2-HMAC-SHA256 (`pbkdf2_sha256$<iter>$<salt>$<hash>`, 600 000 iteraciones) de la contraseña inicial. **No es texto plano.** Generar con `python3 servidor/generar_hash_admin.py`. |
-| `DB_NAME` / `DB_USER` / `DB_PASSWORD` | Sí | Credenciales de la base de datos MySQL. |
-| `MYSQL_ROOT_PASSWORD` | Sí | Contraseña root del contenedor MySQL. |
+| `DB_NAME` / `DB_USER` / `DB_PASSWORD` | Sí | Credenciales de la base de datos MySQL. Al crear el volumen, `servidor/scripts/mysql-init/` deja a `DB_USER` solo con `SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES` sobre la base (sin `DROP` de tablas, `GRANT`, `LOCK TABLES`, triggers ni rutinas). Solo se aplica a volúmenes nuevos: en uno creado antes, hacerlo a mano con root. |
+| `MYSQL_ROOT_PASSWORD` | Sí | Contraseña root del contenedor MySQL. La app no la usa; solo `restore_db.sh`. |
 | `DB_SSL_CA` | No | Ruta *dentro del contenedor* a un CA cert para cifrar la conexión servidor→MySQL. Sin efecto mientras `db` y `servidor` compartan la red interna de Compose (caso por defecto); solo hace falta si la base de datos se aloja fuera de esa red (managed DB en la nube, otra máquina) — puede colocarse dentro de `/certs`, reutilizando el mismo volumen que `TLS_CERTS_DIR`. |
 | `SECRET_KEY` | Sí | Firma de los JWT. Viene vacía en `.env.example` — si se deja vacía (o ausente), el servidor **aborta al arrancar** con `RuntimeError` (`_require_env` en `servidor/routers/auth.py`); no existe ningún fallback ni JWT firmado con secreto vacío. Generar con `openssl rand -hex 32`. |
 | `KIOSK_API_KEY` | No | Respaldo compartido del header `X-Kiosk-Key`, solo se usa cuando una PC todavía no tiene su propia key (ver "API key de cada PC" abajo); cada uso queda registrado en los logs con advertencia. Una PC que ya tiene key propia no acepta la clave compartida, y con ella cada PC solo puede escribir sus propios datos. Si queda vacía, ese respaldo queda siempre cerrado y todas las PCs deben tener su key propia generada desde el panel. |
@@ -172,6 +172,8 @@ Restaurar (DESTRUCTIVO — sobreescribe la base actual):
 ./servidor/scripts/restore_db.sh /ruta/a/backups/biblioteca-20260913-030000.sql.gz docker-compose.prod.yml
 ```
 
+El restore usa root (`MYSQL_ROOT_PASSWORD` del `.env`) porque el volcado hace `DROP TABLE` y `LOCK TABLES`, que el usuario de la app no tiene.
+
 Los backups tienen la misma PII de estudiantes que la base — guardarlos fuera de la PC maestra (otro disco, almacenamiento cifrado) y nunca en el propio repo (`*.sql.gz` y `/backups/` están en `.gitignore`).
 
 ## Observabilidad
@@ -183,7 +185,7 @@ Más allá del `HEALTHCHECK` de Docker (que solo dice si el proceso responde), `
 - [ ] `SECRET_KEY` rellena con un valor fuerte y aleatorio (no vacía).
 - [ ] Cada PC tiene su propia API key generada desde el panel (pestaña "PCs" → "Generar API key") en vez de depender de `KIOSK_API_KEY`; esta última solo debería estar rellena mientras dure la migración de PCs existentes.
 - [ ] `ADMIN_PASS_HASH` propio (no el de ejemplo — el servidor lo rechaza igual, pero conviene no depender de eso).
-- [ ] Desplegado con `docker-compose.prod.yml`, no con el de desarrollo (evita `--reload` y exponer el puerto de MySQL).
+- [ ] Desplegado con `docker-compose.prod.yml`, no con el de desarrollo (evita `--reload` y exponer el puerto de MySQL). El de producción además corre `servidor` con el sistema de archivos de solo lectura, sin capabilities de Linux y con `no-new-privileges`; el de desarrollo publica la API solo en `127.0.0.1`.
 - [ ] `SERVER_BIND_IP` fijada a la IP de la interfaz de la LAN de los kioscos, y comprobado desde una red que no debería tener acceso (p. ej. Wi-Fi de invitados) que el puerto `8000` no responde. No confiar solo en UFW/firewalld para eso: Docker se los salta con sus propias reglas de iptables. Si hace falta filtrar además por IP de origen dentro de esa LAN, usar la cadena `DOCKER-USER` de iptables.
 - [ ] `CORS_ORIGINS` configurado solo si el panel se sirve desde un origen distinto a la API (no es necesario por defecto).
 - [ ] `TLS_CERT_PATH`/`TLS_KEY_PATH` configuradas (ver sección **TLS**) y `ca.pem` distribuido a los 16 kioscos — si se decide operar sin TLS a propósito, confirmar que cada `config.ini` tiene `permitir_http_inseguro = true` fijado conscientemente, no por omisión.

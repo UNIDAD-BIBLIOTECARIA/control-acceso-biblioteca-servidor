@@ -1,7 +1,8 @@
 # Desarrollo — configuración por defecto de `docker compose up`.
 #
 # Monta ./servidor como volumen y corre uvicorn con --reload, así que los
-# cambios en el código se reflejan sin reconstruir la imagen. Publica además
+# cambios en el código se reflejan sin reconstruir la imagen. La API se
+# publica solo en 127.0.0.1:8000. Publica además
 # el puerto 3306 de MySQL en 127.0.0.1 del host para poder conectarte directo
 # (MySQL Workbench, `mysql` CLI, backups manuales, etc.) durante desarrollo
 # local, sin exponerlo al resto de la red (bind solo a loopback).
@@ -37,8 +38,15 @@ services:
       - "127.0.0.1:3307:3306"
     volumes:
       - db_data:/var/lib/mysql
+      # Recorta los privilegios del usuario de la app (solo al crear el volumen).
+      - ./servidor/scripts/mysql-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      # Sin credenciales: `mysqladmin ping` sale con 0 si el servidor responde,
+      # aunque rechace el login, así que la contraseña de root no tiene por qué
+      # quedar en el comando (visible en `docker inspect`). Por TCP (127.0.0.1)
+      # y no por socket, para no dar por sano al servidor temporal sin red que
+      # la imagen levanta mientras inicializa la base.
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -54,8 +62,12 @@ services:
     build: ./servidor
     restart: unless-stopped
     command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    # Solo en loopback: este compose corre con --reload y el código montado
+    # como volumen, y no debe quedar accesible desde la LAN si se levanta por
+    # error en la PC maestra. Para probar con un kiosko real, usá el de
+    # producción o cambiá temporalmente el bind a la IP de la LAN.
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       db:
         condition: service_healthy

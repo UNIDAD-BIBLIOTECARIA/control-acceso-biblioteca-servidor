@@ -27,6 +27,15 @@
 # Uso:
 #   docker compose -f docker-compose.prod.yml up -d --build
 #
+# Endurecimiento: los dos servicios corren con no-new-privileges (ningún
+# binario setuid puede elevar privilegios) y límite de procesos. `servidor`
+# además corre sin ninguna capability de Linux y con el sistema de archivos
+# de solo lectura (solo /tmp en memoria es escribible): la app no escribe a
+# disco, así que quien lograra ejecutar código no podría modificar el código
+# ni dejar archivos persistentes. `db` conserva las capabilities por defecto
+# porque el entrypoint de MySQL las necesita para preparar el datadir y
+# cambiar al usuario mysql.
+#
 # deploy.resources.limits en ambos servicios acota CPU/memoria por contenedor
 # (soportado por `docker compose up` sin Swarm en Compose v2) para que un pico
 # de tráfico, una fuga de memoria o un contenedor con problemas no agote los
@@ -45,16 +54,26 @@ services:
       TZ: America/El_Salvador
     volumes:
       - db_data:/var/lib/mysql
+      # Recorta los privilegios del usuario de la app (solo al crear el volumen).
+      - ./servidor/scripts/mysql-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      # Sin credenciales: `mysqladmin ping` sale con 0 si el servidor responde,
+      # aunque rechace el login, así que la contraseña de root no tiene por qué
+      # quedar en el comando (visible en `docker inspect`). Por TCP (127.0.0.1)
+      # y no por socket, para no dar por sano al servidor temporal sin red que
+      # la imagen levanta mientras inicializa la base.
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
       interval: 5s
       timeout: 5s
       retries: 10
+    security_opt:
+      - no-new-privileges:true
     deploy:
       resources:
         limits:
           cpus: "1.0"
           memory: 768M
+          pids: 512
 
   servidor:
     build: ./servidor
@@ -98,11 +117,19 @@ services:
       DB_SSL_CA: ${DB_SSL_CA}
     volumes:
       - ${TLS_CERTS_DIR:-./certs}:/certs:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     deploy:
       resources:
         limits:
           cpus: "1.0"
           memory: 512M
+          pids: 128
 
 volumes:
   db_data:

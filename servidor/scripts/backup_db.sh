@@ -48,8 +48,10 @@ ARCHIVO="$DIR_SALIDA/${DB_NAME}-${TIMESTAMP}.sql.gz"
 echo "Volcando '$DB_NAME' a $ARCHIVO..."
 # MYSQL_PWD (en vez de -p"$DB_PASSWORD") para que la contraseña no quede
 # visible en `ps aux` dentro del contenedor mientras corre mysqldump.
+# --no-tablespaces: el usuario de la app no tiene el privilegio global PROCESS
+# y la base no usa tablespaces propios; sin el flag mysqldump avisa con un error.
 docker compose -f "$COMPOSE_FILE" exec -T -e MYSQL_PWD="$DB_PASSWORD" db \
-    mysqldump -u "$DB_USER" --single-transaction --routines "$DB_NAME" \
+    mysqldump -u "$DB_USER" --single-transaction --routines --no-tablespaces "$DB_NAME" \
     | gzip > "$ARCHIVO"
 
 echo "Listo: $ARCHIVO ($(du -h "$ARCHIVO" | cut -f1))"

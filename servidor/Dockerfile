@@ -5,6 +5,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends tzdata \
 
 WORKDIR /app
 
+# El contenedor de producción corre con el sistema de archivos de solo lectura
+# (docker-compose.prod.yml): que Python no intente escribir .pyc.
+ENV PYTHONDONTWRITEBYTECODE=1
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

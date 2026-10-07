@@ -27,8 +27,7 @@ fi
 [ -f .env ] && source .env
 
 : "${DB_NAME:?Falta DB_NAME (en el entorno o en .env)}"
-: "${DB_USER:?Falta DB_USER (en el entorno o en .env)}"
-: "${DB_PASSWORD:?Falta DB_PASSWORD (en el entorno o en .env)}"
+: "${MYSQL_ROOT_PASSWORD:?Falta MYSQL_ROOT_PASSWORD (en el entorno o en .env)}"
 
 echo "Esto SOBREESCRIBE la base '$DB_NAME' (servicio 'db' de $COMPOSE_FILE) con el"
 echo "contenido de '$ARCHIVO'. Los datos actuales de esa base se pierden."
@@ -38,7 +37,9 @@ if [ "$CONFIRMACION" != "si" ]; then
     exit 1
 fi
 
-gunzip -c "$ARCHIVO" | docker compose -f "$COMPOSE_FILE" exec -T -e MYSQL_PWD="$DB_PASSWORD" db \
-    mysql -u "$DB_USER" "$DB_NAME"
+# Con root y no con el usuario de la app: el volcado hace DROP TABLE y
+# LOCK TABLES, que ese usuario no tiene (ver scripts/mysql-init/).
+gunzip -c "$ARCHIVO" | docker compose -f "$COMPOSE_FILE" exec -T -e MYSQL_PWD="$MYSQL_ROOT_PASSWORD" db \
+    mysql -u root "$DB_NAME"
 
 echo "Restauración completa."
