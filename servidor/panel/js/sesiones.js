@@ -1,7 +1,6 @@
 const Sesiones = {
     datos: [],
     _ticker: null,
-    _autoRefresh: null,
 
     async cargar() {
         const fecha    = document.getElementById('filter-fecha')?.value   || '';
@@ -128,9 +127,12 @@ const Sesiones = {
         }, 60000);
     },
 
-    _iniciarAutoRefresh() {
-        clearInterval(this._autoRefresh);
-        this._autoRefresh = setInterval(() => this.cargar(), 30000);
+    // El refresco periódico de la tabla lo hace App (un solo intervalo para
+    // todas las pestañas); acá solo queda el ticker que actualiza la duración
+    // de las sesiones activas, y App lo detiene al salir de la pestaña.
+    detener() {
+        clearInterval(this._ticker);
+        this._ticker = null;
     },
 
     _renderResumen(r) {
@@ -168,6 +170,5 @@ const Sesiones = {
         document.getElementById('btn-export')?.addEventListener('click', () => this.exportarCSV());
 
         this.cargar();
-        this._iniciarAutoRefresh();
     }
 };

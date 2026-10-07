@@ -35,8 +35,11 @@ const App = {
     },
 
     logout() {
+        // Varias peticiones en vuelo pueden recibir 401 a la vez y llamar acá
+        // cada una: solo la primera cierra la sesión.
+        if (document.getElementById('panel-screen').classList.contains('hidden')) return;
         API.logout();
-        clearInterval(this.refreshInterval);
+        this._detenerRefresco();
         document.getElementById('panel-screen').classList.add('hidden');
         document.getElementById('login-screen').classList.remove('hidden');
         document.getElementById('tab-container').innerHTML = '';
@@ -46,13 +49,21 @@ const App = {
         document.getElementById('login-screen').classList.add('hidden');
         document.getElementById('panel-screen').classList.remove('hidden');
         await this.cambiarTab('sesiones');
+        clearInterval(this.refreshInterval);  // por si ya había uno de un login anterior
         this.refreshInterval = setInterval(() => {
             if (this.currentTab === 'sesiones') Sesiones.cargar();
             if (this.currentTab === 'pcs')      PCs.cargar();
         }, 30000);
     },
 
+    _detenerRefresco() {
+        clearInterval(this.refreshInterval);
+        this.refreshInterval = null;
+        Sesiones.detener();
+    },
+
     async cambiarTab(tab) {
+        if (this.currentTab === 'sesiones' && tab !== 'sesiones') Sesiones.detener();
         this.currentTab = tab;
         document.querySelectorAll('.tab').forEach(b => {
             const isActive = b.dataset.tab === tab;
