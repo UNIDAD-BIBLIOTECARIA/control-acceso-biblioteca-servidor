@@ -1,5 +1,6 @@
 import logging
 import os
+from contextlib import asynccontextmanager
 
 from db import connection as db_connection
 from db import init_db
@@ -18,7 +19,14 @@ ENABLE_API_DOCS = os.environ.get("ENABLE_API_DOCS", "").strip().lower() in ("1",
 # no hay motivo para exponer tráfico/latencias del servicio a quien no lo pidió.
 ENABLE_METRICS = os.environ.get("ENABLE_METRICS", "").strip().lower() in ("1", "true", "yes")
 
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    init_db()
+    yield
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="Biblioteca Control",
     version="1.0.0",
     docs_url="/docs" if ENABLE_API_DOCS else None,
@@ -135,11 +143,6 @@ if os.path.isdir(panel_path):
     @app.get("/")
     def root():
         return FileResponse(os.path.join(panel_path, "index.html"))
-
-
-@app.on_event("startup")
-def startup():
-    init_db()
 
 
 @app.get("/health")

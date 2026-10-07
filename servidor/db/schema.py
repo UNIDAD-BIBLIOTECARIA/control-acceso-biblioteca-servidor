@@ -1,7 +1,7 @@
 import logging
 import os
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 
 from contrasenas_publicadas import es_hash_de_contrasena_publicada
 
@@ -197,7 +197,7 @@ def _sembrar_admin_inicial(conn):
 
     conn.execute(
         "INSERT INTO admins (username, password_hash, actualizado) VALUES (%s, %s, %s)",
-        (username, password_hash, datetime.utcnow()),
+        (username, password_hash, datetime.now(UTC).replace(tzinfo=None)),
     )
     conn.commit()
     log.info("Administrador inicial '%s' creado a partir de ADMIN_USER/ADMIN_PASS_HASH.", username)

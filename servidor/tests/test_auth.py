@@ -5,7 +5,7 @@ _token_revocado (invalidación de JWT tras cambio de contraseña) y verify_token
 necesita `db_admins.obtener_actualizado`, se reemplaza (monkeypatch) por un
 doble de prueba."""
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from routers import auth
@@ -117,7 +117,7 @@ def test_verify_token_admin_ok_si_no_hubo_cambio_de_password_despues(monkeypatch
 
 
 def test_verify_token_admin_revocado_si_password_cambio_despues(monkeypatch):
-    monkeypatch.setattr(auth.db_admins, "obtener_actualizado", lambda username: datetime.utcnow() + timedelta(hours=1))
+    monkeypatch.setattr(auth.db_admins, "obtener_actualizado", lambda username: datetime.now(UTC) + timedelta(hours=1))
     token = auth.create_token({"sub": "admin", "role": "admin"})
     with pytest.raises(auth.HTTPException) as exc:
         auth.verify_token(token)

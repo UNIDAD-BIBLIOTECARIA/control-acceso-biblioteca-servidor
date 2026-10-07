@@ -1,5 +1,5 @@
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pymysql
 
@@ -39,7 +39,7 @@ def crear(est):
         if existe:
             raise CarnetYaRegistrado()
 
-        fecha_reg = est.fecha_registro or datetime.utcnow().date().isoformat()
+        fecha_reg = est.fecha_registro or datetime.now(UTC).date().isoformat()
         conn.execute("""
             INSERT INTO estudiantes (carnet, nombre, fecha_nacimiento, carrera, facultad, sexo, fecha_registro)
             VALUES (%s, %s, %s, %s, %s, %s, %s)

@@ -1,6 +1,12 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from .connection import conexion
+
+
+def _ahora_utc():
+    """UTC sin zona horaria: las columnas DATETIME de MySQL no guardan zona, y así los valores
+    quedan en el mismo reloj que el `iat` de los JWT sin depender de la zona del servidor."""
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def obtener_hash(username):
@@ -20,13 +26,13 @@ def obtener_actualizado(username):
 
 def actualizar_password(username, nuevo_hash):
     """`actualizado` se fija en UTC calculado acá en Python, no con el `NOW()` de MySQL: así
-    queda en el mismo reloj que el `iat` de los JWT (también `datetime.utcnow()`, ver
+    queda en el mismo reloj que el `iat` de los JWT (también UTC, ver
     `routers/auth.py::create_token`) y la comparación en `verify_token` no depende de qué
     zona horaria tenga configurada el servidor de MySQL."""
     with conexion() as conn:
         conn.execute(
             "UPDATE admins SET password_hash = %s, actualizado = %s WHERE username = %s",
-            (nuevo_hash, datetime.utcnow(), username),
+            (nuevo_hash, _ahora_utc(), username),
         )
         conn.commit()
 
@@ -37,7 +43,7 @@ def revocar_token(jti, expira):
     más: se aprovecha cada inserción para purgar las entradas vencidas y que la tabla no
     crezca con cada logout."""
     with conexion() as conn:
-        conn.execute("DELETE FROM tokens_revocados WHERE expira < %s", (datetime.utcnow(),))
+        conn.execute("DELETE FROM tokens_revocados WHERE expira < %s", (_ahora_utc(),))
         conn.execute("INSERT IGNORE INTO tokens_revocados (jti, expira) VALUES (%s, %s)", (jti, expira))
         conn.commit()
 

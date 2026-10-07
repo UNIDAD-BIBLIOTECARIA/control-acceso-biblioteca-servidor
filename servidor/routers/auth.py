@@ -248,9 +248,10 @@ def _registrar_intento_fallido(ip: str) -> None:
 
 def create_token(data: dict) -> str:
     payload = data.copy()
-    payload["iat"] = datetime.utcnow()
+    ahora = datetime.now(UTC)
+    payload["iat"] = ahora
     payload["jti"] = secrets.token_urlsafe(16)
-    payload["exp"] = datetime.utcnow() + timedelta(hours=TOKEN_EXPIRE_HOURS)
+    payload["exp"] = ahora + timedelta(hours=TOKEN_EXPIRE_HOURS)
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
@@ -589,7 +590,7 @@ def cambiar_password(req: CambiarPasswordRequest, response: Response, usuario: d
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Contraseña actual incorrecta")
     motivo = validar_password_nueva(req.password_nueva, username)
     if motivo:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=motivo)
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=motivo)
     db_admins.actualizar_password(username, generar_hash(req.password_nueva))
     log.info("Contraseña de administrador '%s' actualizada", username)
     csrf_token = secrets.token_urlsafe(32)
