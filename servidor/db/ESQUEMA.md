@@ -151,6 +151,14 @@ Telemetría de hardware por PC (una fila por PC, se sobrescribe).
 
 ## Notas de migración vigentes
 
+Las migraciones están versionadas en `MIGRACIONES` (`db/schema.py`) y se aplican
+una sola vez al arrancar; las ya aplicadas quedan registradas en la tabla
+`schema_migraciones` (`version`, `descripcion`, `aplicada`). Una base nueva nace
+con el esquema completo desde los `CREATE TABLE` de `init_db`. Como el DDL de
+MySQL no es transaccional, cada migración es idempotente: si falla a mitad, se
+reintenta en el siguiente arranque. Hacé un backup (`scripts/backup_db.sh`)
+antes de desplegar una versión que agregue migraciones.
+
 - `sesiones.carnet` se relajó a `NULL` (permite sesiones de invitado sin carnet).
 - `estudiantes.fecha_nacimiento`: si una base preexistente la tiene como `DATE`,
   se migra a `YEAR` vía columna auxiliar (`fecha_nacimiento_new`) para evitar

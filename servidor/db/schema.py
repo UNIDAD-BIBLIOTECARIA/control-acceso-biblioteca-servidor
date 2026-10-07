@@ -41,6 +41,93 @@ def _tipo_columna(conn, tabla, columna):
     return row["tipo"] if row else None
 
 
+# --- Migraciones versionadas ----------------------------------------------
+#
+# El CREATE TABLE IF NOT EXISTS de init_db describe siempre el esquema actual completo, así que
+# una base nueva ya nace al día. Las migraciones de abajo solo existen para llevar bases creadas
+# con versiones anteriores hasta ese mismo esquema. Cada una se aplica una sola vez y queda
+# registrada en `schema_migraciones`, en lugar de reevaluarse (o reejecutarse) en cada arranque.
+#
+# Reglas para agregar una:
+#   - Número nuevo al final de MIGRACIONES; nunca renumerar ni editar una ya publicada.
+#   - Reflejar el cambio también en el CREATE TABLE de init_db y en db/ESQUEMA.md.
+#   - Debe ser idempotente: en MySQL el DDL hace commit implícito, así que no hay rollback
+#     transaccional. Si una migración falla a mitad, el arranque aborta sin registrarla y en el
+#     siguiente arranque se vuelve a ejecutar desde el estado intermedio en que quedó.
+#   - Para deshacer una migración ya aplicada se agrega otra nueva que revierta el cambio
+#     (y se restaura un backup si hubo pérdida de datos: hacer backup antes de desplegar).
+
+
+def _m1_columnas_mantenimiento_y_api_key_en_pcs(conn):
+    if not _tiene_columna(conn, "pcs", "ultimo_mantenimiento"):
+        conn.execute("ALTER TABLE pcs ADD COLUMN ultimo_mantenimiento DATETIME NULL")
+    if not _tiene_columna(conn, "pcs", "api_key_hash"):
+        conn.execute("ALTER TABLE pcs ADD COLUMN api_key_hash VARCHAR(255) NULL")
+    if not _tiene_columna(conn, "pcs", "api_key_generada"):
+        conn.execute("ALTER TABLE pcs ADD COLUMN api_key_generada DATETIME NULL")
+
+
+def _m2_carnet_de_sesion_opcional(conn):
+    conn.execute("ALTER TABLE sesiones MODIFY COLUMN carnet VARCHAR(30) NULL")
+
+
+def _m3_quitar_departamento_de_estudiantes(conn):
+    if _tiene_columna(conn, "estudiantes", "departamento"):
+        conn.execute("ALTER TABLE estudiantes DROP COLUMN departamento")
+
+
+def _m4_fecha_nacimiento_como_anio(conn):
+    """El kiosko solo captura el año de nacimiento. Un ALTER MODIFY directo de DATE a YEAR no
+    extrae el año (MySQL lo trunca a 0000), así que se pasa por una columna auxiliar. Cada paso
+    comprueba el estado para poder retomarse si un arranque anterior se cortó a mitad."""
+    if _tipo_columna(conn, "estudiantes", "fecha_nacimiento") == "date":
+        if not _tiene_columna(conn, "estudiantes", "fecha_nacimiento_new"):
+            conn.execute("ALTER TABLE estudiantes ADD COLUMN fecha_nacimiento_new YEAR")
+        conn.execute(
+            "UPDATE estudiantes SET fecha_nacimiento_new = YEAR(fecha_nacimiento) "
+            "WHERE fecha_nacimiento IS NOT NULL"
+        )
+        conn.commit()
+        conn.execute("ALTER TABLE estudiantes DROP COLUMN fecha_nacimiento")
+    if _tiene_columna(conn, "estudiantes", "fecha_nacimiento_new"):
+        conn.execute("ALTER TABLE estudiantes CHANGE COLUMN fecha_nacimiento_new fecha_nacimiento YEAR")
+
+
+MIGRACIONES = [
+    (1, "columnas de mantenimiento y API key en pcs", _m1_columnas_mantenimiento_y_api_key_en_pcs),
+    (2, "sesiones.carnet admite NULL", _m2_carnet_de_sesion_opcional),
+    (3, "quitar estudiantes.departamento", _m3_quitar_departamento_de_estudiantes),
+    (4, "estudiantes.fecha_nacimiento de DATE a YEAR", _m4_fecha_nacimiento_como_anio),
+]
+
+
+def _aplicar_migraciones(conn):
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS schema_migraciones (
+            version INT PRIMARY KEY,
+            descripcion VARCHAR(255) NOT NULL,
+            aplicada DATETIME NOT NULL
+        ) ENGINE=InnoDB
+    """)
+    # Un lock con nombre evita que dos procesos arrancando a la vez apliquen la misma migración.
+    if conn.execute("SELECT GET_LOCK('biblioteca_migraciones', 60) AS ok").fetchone()["ok"] != 1:
+        raise RuntimeError("No se pudo obtener el lock de migraciones (¿otro proceso migrando?)")
+    try:
+        aplicadas = {row["version"] for row in conn.execute("SELECT version FROM schema_migraciones").fetchall()}
+        for version, descripcion, migrar in MIGRACIONES:
+            if version in aplicadas:
+                continue
+            log.info("Aplicando migración %d: %s", version, descripcion)
+            migrar(conn)
+            conn.execute(
+                "INSERT INTO schema_migraciones (version, descripcion, aplicada) VALUES (%s, %s, %s)",
+                (version, descripcion, datetime.now(UTC).replace(tzinfo=None)),
+            )
+            conn.commit()
+    finally:
+        conn.execute("SELECT RELEASE_LOCK('biblioteca_migraciones')")
+
+
 def init_db():
     with conexion() as conn:
         conn.executescript("""
@@ -121,31 +208,7 @@ def init_db():
         """)
         conn.commit()
 
-        # Migraciones ligeras para bases ya existentes (no hay sistema de
-        # migraciones formal; los cambios de esquema se aplican aquí).
-        if not _tiene_columna(conn, "pcs", "ultimo_mantenimiento"):
-            conn.execute("ALTER TABLE pcs ADD COLUMN ultimo_mantenimiento DATETIME NULL")
-        if not _tiene_columna(conn, "pcs", "api_key_hash"):
-            conn.execute("ALTER TABLE pcs ADD COLUMN api_key_hash VARCHAR(255) NULL")
-        if not _tiene_columna(conn, "pcs", "api_key_generada"):
-            conn.execute("ALTER TABLE pcs ADD COLUMN api_key_generada DATETIME NULL")
-        conn.execute("ALTER TABLE sesiones MODIFY COLUMN carnet VARCHAR(30) NULL")
-        if _tiene_columna(conn, "estudiantes", "departamento"):
-            conn.execute("ALTER TABLE estudiantes DROP COLUMN departamento")
-
-        # El kiosko solo captura el año de nacimiento; bases creadas antes de
-        # este cambio tienen la columna como DATE. Un ALTER MODIFY directo de
-        # DATE a YEAR no extrae el año (MySQL lo trunca a 0000), así que se
-        # migra pasando por una columna nueva.
-        if _tipo_columna(conn, "estudiantes", "fecha_nacimiento") == "date":
-            conn.execute("ALTER TABLE estudiantes ADD COLUMN fecha_nacimiento_new YEAR")
-            conn.execute(
-                "UPDATE estudiantes SET fecha_nacimiento_new = YEAR(fecha_nacimiento) "
-                "WHERE fecha_nacimiento IS NOT NULL"
-            )
-            conn.execute("ALTER TABLE estudiantes DROP COLUMN fecha_nacimiento")
-            conn.execute("ALTER TABLE estudiantes CHANGE COLUMN fecha_nacimiento_new fecha_nacimiento YEAR")
-        conn.commit()
+        _aplicar_migraciones(conn)
 
         _sembrar_admin_inicial(conn)
 
