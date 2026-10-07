@@ -30,7 +30,12 @@ const API = {
         if (res.status === 401) { App.logout(); throw new Error('Sesión expirada'); }
         if (!res.ok) {
             const err = await res.json().catch(() => ({}));
-            throw new Error(err.detail || `Error ${res.status}`);
+            // Los errores de validación (422) traen `detail` como lista de
+            // {msg, loc, ...}; los demás, como texto.
+            const detalle = Array.isArray(err.detail)
+                ? err.detail.map(d => String(d.msg || '').replace(/^Value error, /, '')).join(' ')
+                : err.detail;
+            throw new Error(detalle || `Error ${res.status}`);
         }
         return res.status === 204 ? null : res.json();
     },

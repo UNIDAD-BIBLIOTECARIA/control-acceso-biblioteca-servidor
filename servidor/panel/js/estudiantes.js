@@ -62,6 +62,35 @@ const Estudiantes = {
         btn.setAttribute('aria-expanded', String(abierta));
     },
 
+    // Facultad -> carreras válidas (GET /estudiantes/catalogo). El servidor
+    // rechaza combinaciones fuera del catálogo; acá solo se ofrecen como
+    // sugerencias en los campos del formulario.
+    _catalogo: {},
+
+    async _cargarCatalogo() {
+        try {
+            this._catalogo = await API.fetch('/estudiantes/catalogo');
+        } catch (e) {
+            this._catalogo = {};
+        }
+        this._llenarDatalist('dl-est-facultades', Object.keys(this._catalogo));
+    },
+
+    _llenarDatalist(id, valores) {
+        const dl = document.getElementById(id);
+        if (!dl) return;
+        dl.replaceChildren(...valores.map(v => {
+            const opt = document.createElement('option');
+            opt.value = v;
+            return opt;
+        }));
+    },
+
+    _actualizarCarreras() {
+        const facultad = document.getElementById('est-facultad').value.trim();
+        this._llenarDatalist('dl-est-carreras', this._catalogo[facultad] || []);
+    },
+
     _abrirModal(titulo, datos = {}) {
         document.getElementById('modal-est-titulo').textContent = titulo;
         document.getElementById('est-carnet').value       = datos.carnet      || '';
@@ -69,6 +98,7 @@ const Estudiantes = {
         document.getElementById('est-nombre').value       = datos.nombre      || '';
         document.getElementById('est-carrera').value      = datos.carrera     || '';
         document.getElementById('est-facultad').value     = datos.facultad    || '';
+        this._actualizarCarreras();
         document.getElementById('est-fecha-nac').value    = datos.fecha_nacimiento || '';
         document.getElementById('est-sexo').value         = datos.sexo        || '';
         document.getElementById('modal-est-error').textContent = '';
@@ -121,11 +151,13 @@ const Estudiantes = {
     init() {
         document.getElementById('filter-est')?.addEventListener('input', () => this.filtrar());
         document.getElementById('btn-nuevo-est')?.addEventListener('click', () => this._abrirNuevo());
+        document.getElementById('est-facultad')?.addEventListener('input', () => this._actualizarCarreras());
         document.getElementById('btn-est-guardar')?.addEventListener('click', () => this._guardar());
         document.getElementById('btn-est-cancelar')?.addEventListener('click', () => this._cerrarModal());
         document.getElementById('modal-est')?.addEventListener('click', e => {
             if (e.target.id === 'modal-est') this._cerrarModal();
         });
+        this._cargarCatalogo();
         this.cargar();
     }
 };

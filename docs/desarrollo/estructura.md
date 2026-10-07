@@ -71,6 +71,7 @@ No hay sistema formal de migraciones (Alembic, etc.): los cambios de esquema son
 | `GET` | `/estado` | 🔒 | Lista el estado en vivo de todas las PCs |
 | `POST` | `/estudiantes` | 🔒 kiosko o admin | Registra estudiante (201, 409 si ya existe) |
 | `GET` | `/estudiantes` | 🔒 solo admin | Lista completa |
+| `GET` | `/estudiantes/catalogo` | 🔒 solo admin | Facultades y sus carreras válidas (`models/catalogo.py`). `POST`/`PUT /estudiantes` rechazan con 422 una combinación carrera/facultad fuera de este catálogo; `/sync` y `/estado` no rechazan el payload, pero la descartan (guardan `NULL`). |
 | `GET` | `/estudiantes/{carnet}` | 🔒 kiosko o admin | 404 si no existe |
 | `PUT` | `/estudiantes/{carnet}` | 🔒 kiosko o admin | Actualiza campos. Un kiosko solo edita al estudiante con sesión activa en su PC (403 si no) |
 | `DELETE` | `/estudiantes/{carnet}` | 🔒 solo admin | 204, 409 si tiene sesiones (FK) |

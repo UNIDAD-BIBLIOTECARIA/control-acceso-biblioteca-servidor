@@ -4,6 +4,7 @@ from db import estado as db_estado
 from db import estudiantes as db_estudiantes
 from fastapi import APIRouter, Depends, HTTPException, Request
 from models import Estudiante
+from models.catalogo import FACULTADES
 from seudonimo import seudonimo
 
 from routers.auth import (
@@ -37,6 +38,12 @@ def registrar_estudiante(
 @router.get("", dependencies=[Depends(require_auth)])
 def listar_estudiantes():
     return db_estudiantes.listar()
+
+
+@router.get("/catalogo", dependencies=[Depends(require_auth)])
+def catalogo():
+    """Facultades y sus carreras válidas, para el formulario de estudiantes del panel."""
+    return {facultad: list(carreras) for facultad, carreras in FACULTADES.items()}
 
 
 @router.get("/{carnet}", dependencies=[Depends(limitar_lecturas_estudiante)])

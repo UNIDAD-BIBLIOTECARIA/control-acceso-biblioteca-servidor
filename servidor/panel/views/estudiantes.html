@@ -33,11 +33,15 @@
             <label>Nombre *
                 <input type="text" id="est-nombre" placeholder="Nombre completo">
             </label>
-            <label>Carrera
-                <input type="text" id="est-carrera" placeholder="Ingeniería en Sistemas">
-            </label>
             <label>Facultad
-                <input type="text" id="est-facultad" placeholder="Ingeniería y Arquitectura">
+                <input type="text" id="est-facultad" list="dl-est-facultades" autocomplete="off"
+                       placeholder="Departamento de Ingeniería y Arquitectura">
+                <datalist id="dl-est-facultades"></datalist>
+            </label>
+            <label>Carrera
+                <input type="text" id="est-carrera" list="dl-est-carreras" autocomplete="off"
+                       placeholder="Ingeniería en Sistemas Informáticos">
+                <datalist id="dl-est-carreras"></datalist>
             </label>
             <label>Año de nacimiento
                 <input type="number" id="est-fecha-nac" min="1901" max="2155" placeholder="2004">

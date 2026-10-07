@@ -523,3 +523,27 @@ def test_revocar_api_key_pc_inexistente_da_404(client, monkeypatch, admin_sin_re
     token = auth_module.create_token({"sub": "admin", "role": "admin", "csrf": "x"})
     r = client.delete("/pcs/PC-99/api-key", headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 404
+
+
+# --- Catálogo de carreras y facultades -------------------------------------
+
+def test_alta_de_estudiante_con_carrera_fuera_del_catalogo_da_422(client, admin_sin_revocacion, monkeypatch):
+    creados = []
+    monkeypatch.setattr(db_estudiantes, "crear", lambda est: creados.append(est))
+    token = auth_module.create_token({"sub": "admin", "role": "admin", "csrf": "x"})
+    r = client.post(
+        "/estudiantes",
+        json={"carnet": "AB12345", "nombre": "X", "carrera": "Carrera inventada",
+              "facultad": "Departamento de Ingeniería y Arquitectura"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 422
+    assert creados == []
+
+
+def test_catalogo_requiere_admin_y_lista_las_facultades(client, admin_sin_revocacion):
+    assert client.get("/estudiantes/catalogo").status_code == 401
+    token = auth_module.create_token({"sub": "admin", "role": "admin", "csrf": "x"})
+    r = client.get("/estudiantes/catalogo", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200
+    assert "Ingeniería en Sistemas Informáticos" in r.json()["Departamento de Ingeniería y Arquitectura"]
