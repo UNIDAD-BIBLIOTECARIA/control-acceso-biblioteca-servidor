@@ -22,7 +22,8 @@ const Cuenta = {
         okEl.classList.add('hidden');
 
         if (!actual || !nueva) { errEl.textContent = 'Completa ambos campos.'; return; }
-        if (nueva.length < 8) { errEl.textContent = 'La nueva contraseña debe tener al menos 8 caracteres.'; return; }
+        if (nueva.length < 12) { errEl.textContent = 'La nueva contraseña debe tener al menos 12 caracteres.'; return; }
+        if (nueva.length > 128) { errEl.textContent = 'La nueva contraseña no puede superar los 128 caracteres.'; return; }
         if (nueva !== confirmar) { errEl.textContent = 'La confirmación no coincide con la contraseña nueva.'; return; }
 
         try {

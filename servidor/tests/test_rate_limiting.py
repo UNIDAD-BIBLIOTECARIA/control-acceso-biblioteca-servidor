@@ -215,3 +215,25 @@ def test_purgar_escrituras_expiradas_libera_memoria():
     auth._escrituras_kiosko["PC-viejo"] = [time.time() - 61]
     auth._purgar_escrituras_expiradas()
     assert "PC-viejo" not in auth._escrituras_kiosko
+
+
+# --- concurrencia: los limitadores corren en el threadpool de FastAPI --------
+
+def test_limitador_no_deja_pasar_de_mas_con_requests_concurrentes(monkeypatch):
+    # Sin el lock, varios hilos leían la misma ventana antes de que ninguno
+    # agregara su marca de tiempo y el límite dejaba pasar más requests.
+    from concurrent.futures import ThreadPoolExecutor
+
+    monkeypatch.setattr(auth, "KIOSKO_MAX_ESCRITURAS_MIN", 5)
+    actor = {"sub": "PC-01", "role": "kiosk", "pc_id": "PC-01"}
+
+    def intentar(_):
+        try:
+            auth.limitar_escrituras_kiosko(make_request(), actor)
+            return True
+        except HTTPException:
+            return False
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        aceptados = sum(pool.map(intentar, range(50)))
+    assert aceptados == 5

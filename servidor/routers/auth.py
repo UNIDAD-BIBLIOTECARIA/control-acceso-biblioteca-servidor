@@ -4,6 +4,7 @@ import hmac
 import logging
 import os
 import secrets
+import threading
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Optional
@@ -128,6 +129,27 @@ def hash_api_key(api_key: str) -> str:
     costo de cómputo de PBKDF2 en cada request de los kioskos."""
     return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
 
+# Política de contraseñas del panel. Mínimo de 12 caracteres: con un único rol de admin y sin
+# segundo factor, la contraseña es la única barrera ante quien llegue al panel. Máximo de 128 para
+# acotar el costo de PBKDF2 por request y rechazar cuerpos absurdos antes de hashearlos.
+PASSWORD_MIN_LONGITUD = 12
+PASSWORD_MAX_LONGITUD = 128
+
+
+def validar_password_nueva(password: str, username: str) -> Optional[str]:
+    """Devuelve el motivo por el que `password` no se acepta como contraseña nueva, o None si
+    cumple la política."""
+    if len(password) < PASSWORD_MIN_LONGITUD:
+        return f"La nueva contraseña debe tener al menos {PASSWORD_MIN_LONGITUD} caracteres"
+    if len(password) > PASSWORD_MAX_LONGITUD:
+        return f"La nueva contraseña no puede superar los {PASSWORD_MAX_LONGITUD} caracteres"
+    if password.strip().lower() == username.strip().lower():
+        return "La nueva contraseña no puede ser igual al nombre de usuario"
+    if es_contrasena_publicada(password):
+        return "Esa contraseña está publicada en el repositorio del proyecto; elegí otra"
+    return None
+
+
 LOGIN_MAX_INTENTOS = int(os.environ.get("LOGIN_MAX_INTENTOS") or 5)
 LOGIN_BLOQUEO_SEGUNDOS = int(os.environ.get("LOGIN_BLOQUEO_MINUTOS") or 15) * 60
 
@@ -145,6 +167,14 @@ TRUSTED_PROXIES = {ip.strip() for ip in os.environ.get("TRUSTED_PROXIES", "").sp
 # (el caso actual, ver docker-entrypoint.sh y docs/desarrollo/despliegue.md) esto no aplica; si
 # alguna vez hace falta escalar a más de un worker o réplica, este estado tiene que migrar
 # primero a un almacén compartido entre procesos.
+#
+# FastAPI corre los endpoints síncronos en un threadpool, así que varios requests pueden leer y
+# modificar estos dicts a la vez: sin un lock, dos intentos simultáneos pueden leer la misma
+# ventana y dejar pasar más requests que el límite, o un purgado puede borrar una entrada
+# mientras otro hilo la está actualizando. Un único lock para los tres alcanza: las secciones
+# críticas son cortas (sin E/S) y el tráfico es bajo.
+_rate_limit_lock = threading.RLock()
+
 _intentos_fallidos: dict[str, dict] = {}
 
 _lecturas_estudiante: dict[str, list[float]] = {}
@@ -179,38 +209,41 @@ def _purgar_intentos_expirados() -> None:
     fallido es más viejo que la ventana de bloqueo. Sin esto, una IP que falla unas pocas
     veces (por debajo del umbral) y no vuelve a intentar queda en el dict para siempre —
     fuga de memoria lenta en despliegues de larga duración."""
-    ahora = time.time()
-    expiradas = [
-        ip
-        for ip, entrada in _intentos_fallidos.items()
-        if entrada["bloqueado_hasta"] < ahora and (ahora - entrada["ultimo_intento"]) > LOGIN_BLOQUEO_SEGUNDOS
-    ]
-    for ip in expiradas:
-        _intentos_fallidos.pop(ip, None)
+    with _rate_limit_lock:
+        ahora = time.time()
+        expiradas = [
+            ip
+            for ip, entrada in _intentos_fallidos.items()
+            if entrada["bloqueado_hasta"] < ahora and (ahora - entrada["ultimo_intento"]) > LOGIN_BLOQUEO_SEGUNDOS
+        ]
+        for ip in expiradas:
+            _intentos_fallidos.pop(ip, None)
 
 
 def _segundos_bloqueado(ip: str) -> Optional[int]:
     """Devuelve los segundos restantes de bloqueo para `ip`, o None si puede intentar login.
     Si el bloqueo ya expiró, limpia el registro (nueva ventana de intentos desde cero)."""
-    entrada = _intentos_fallidos.get(ip)
-    if not entrada:
+    with _rate_limit_lock:
+        entrada = _intentos_fallidos.get(ip)
+        if not entrada:
+            return None
+        restante = entrada["bloqueado_hasta"] - time.time()
+        if restante > 0:
+            return int(restante) + 1
+        if entrada["bloqueado_hasta"]:
+            _intentos_fallidos.pop(ip, None)
         return None
-    restante = entrada["bloqueado_hasta"] - time.time()
-    if restante > 0:
-        return int(restante) + 1
-    if entrada["bloqueado_hasta"]:
-        _intentos_fallidos.pop(ip, None)
-    return None
 
 
 def _registrar_intento_fallido(ip: str) -> None:
-    entrada = _intentos_fallidos.setdefault(ip, {"fallos": 0, "bloqueado_hasta": 0.0, "ultimo_intento": 0.0})
-    entrada["fallos"] += 1
-    entrada["ultimo_intento"] = time.time()
-    log.warning("Login fallido desde %s (intento %d/%d)", ip, entrada["fallos"], LOGIN_MAX_INTENTOS)
-    if entrada["fallos"] >= LOGIN_MAX_INTENTOS:
-        entrada["bloqueado_hasta"] = time.time() + LOGIN_BLOQUEO_SEGUNDOS
-        log.warning("IP %s bloqueada por %d minutos tras exceder intentos de login", ip, LOGIN_BLOQUEO_SEGUNDOS // 60)
+    with _rate_limit_lock:
+        entrada = _intentos_fallidos.setdefault(ip, {"fallos": 0, "bloqueado_hasta": 0.0, "ultimo_intento": 0.0})
+        entrada["fallos"] += 1
+        entrada["ultimo_intento"] = time.time()
+        log.warning("Login fallido desde %s (intento %d/%d)", ip, entrada["fallos"], LOGIN_MAX_INTENTOS)
+        if entrada["fallos"] >= LOGIN_MAX_INTENTOS:
+            entrada["bloqueado_hasta"] = time.time() + LOGIN_BLOQUEO_SEGUNDOS
+            log.warning("IP %s bloqueada por %d minutos tras exceder intentos de login", ip, LOGIN_BLOQUEO_SEGUNDOS // 60)
 
 
 def create_token(data: dict) -> str:
@@ -370,10 +403,11 @@ def _purgar_lecturas_expiradas() -> None:
     """Elimina de `_lecturas_estudiante` las claves sin consultas en la última ventana de 60s.
     Mismo propósito que `_purgar_intentos_expirados`: sin esto el dict crece sin límite en
     despliegues de larga duración (aunque acá el radio es chico, un puñado de kioskos)."""
-    ahora = time.time()
-    vacias = [clave for clave, ventana in _lecturas_estudiante.items() if not ventana or ahora - ventana[-1] > 60]
-    for clave in vacias:
-        _lecturas_estudiante.pop(clave, None)
+    with _rate_limit_lock:
+        ahora = time.time()
+        vacias = [clave for clave, ventana in _lecturas_estudiante.items() if not ventana or ahora - ventana[-1] > 60]
+        for clave in vacias:
+            _lecturas_estudiante.pop(clave, None)
 
 
 def limitar_lecturas_estudiante(request: Request, actor: dict = Depends(require_kiosk_or_admin)) -> dict:
@@ -388,16 +422,17 @@ def limitar_lecturas_estudiante(request: Request, actor: dict = Depends(require_
     if actor.get("role") == "admin":
         return actor
     clave = actor.get("sub") or _client_ip(request)
-    _purgar_lecturas_expiradas()
-    ahora = time.time()
-    ventana = _lecturas_estudiante.setdefault(clave, [])
-    ventana[:] = [t for t in ventana if ahora - t < 60]
-    if len(ventana) >= LECTURAS_ESTUDIANTE_MAX_POR_MINUTO:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Demasiadas consultas de estudiantes, espera un momento.",
-        )
-    ventana.append(ahora)
+    with _rate_limit_lock:
+        _purgar_lecturas_expiradas()
+        ahora = time.time()
+        ventana = _lecturas_estudiante.setdefault(clave, [])
+        ventana[:] = [t for t in ventana if ahora - t < 60]
+        if len(ventana) >= LECTURAS_ESTUDIANTE_MAX_POR_MINUTO:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Demasiadas consultas de estudiantes, espera un momento.",
+            )
+        ventana.append(ahora)
     return actor
 
 
@@ -408,10 +443,11 @@ KIOSKO_MAX_ESCRITURAS_MIN = int(os.environ.get("KIOSKO_MAX_ESCRITURAS_MIN") or 6
 def _purgar_escrituras_expiradas() -> None:
     """Elimina de `_escrituras_kiosko` las claves sin escrituras en la última ventana de 60s.
     Mismo propósito que `_purgar_lecturas_expiradas`."""
-    ahora = time.time()
-    vacias = [clave for clave, ventana in _escrituras_kiosko.items() if not ventana or ahora - ventana[-1] > 60]
-    for clave in vacias:
-        _escrituras_kiosko.pop(clave, None)
+    with _rate_limit_lock:
+        ahora = time.time()
+        vacias = [clave for clave, ventana in _escrituras_kiosko.items() if not ventana or ahora - ventana[-1] > 60]
+        for clave in vacias:
+            _escrituras_kiosko.pop(clave, None)
 
 
 def limitar_escrituras_kiosko(request: Request, actor: dict = Depends(require_kiosk_or_admin)) -> dict:
@@ -424,16 +460,17 @@ def limitar_escrituras_kiosko(request: Request, actor: dict = Depends(require_ki
     if actor.get("role") == "admin":
         return actor
     clave = actor.get("sub") or _client_ip(request)
-    _purgar_escrituras_expiradas()
-    ahora = time.time()
-    ventana = _escrituras_kiosko.setdefault(clave, [])
-    ventana[:] = [t for t in ventana if ahora - t < 60]
-    if len(ventana) >= KIOSKO_MAX_ESCRITURAS_MIN:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Demasiadas escrituras, espera un momento.",
-        )
-    ventana.append(ahora)
+    with _rate_limit_lock:
+        _purgar_escrituras_expiradas()
+        ahora = time.time()
+        ventana = _escrituras_kiosko.setdefault(clave, [])
+        ventana[:] = [t for t in ventana if ahora - t < 60]
+        if len(ventana) >= KIOSKO_MAX_ESCRITURAS_MIN:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Demasiadas escrituras, espera un momento.",
+            )
+        ventana.append(ahora)
     return actor
 
 
@@ -447,8 +484,9 @@ def cobrar_escrituras_kiosko(request: Request, actor: dict, cantidad: int) -> No
     if actor.get("role") == "admin" or cantidad <= 0:
         return
     clave = actor.get("sub") or _client_ip(request)
-    ahora = time.time()
-    _escrituras_kiosko.setdefault(clave, []).extend([ahora] * cantidad)
+    with _rate_limit_lock:
+        ahora = time.time()
+        _escrituras_kiosko.setdefault(clave, []).extend([ahora] * cantidad)
 
 
 @router.post("/login", response_model=Token)
@@ -477,7 +515,8 @@ def login(req: LoginRequest, request: Request, response: Response):
         _registrar_intento_fallido(ip)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales incorrectas")
 
-    _intentos_fallidos.pop(ip, None)
+    with _rate_limit_lock:
+        _intentos_fallidos.pop(ip, None)
     csrf_token = secrets.token_urlsafe(32)
     token = create_token({"sub": req.username, "role": "admin", "csrf": csrf_token})
     # El panel ya no guarda este JSON en sessionStorage (ver M3 en el histórico de auditorías
@@ -548,16 +587,9 @@ def cambiar_password(req: CambiarPasswordRequest, response: Response, usuario: d
     hash_almacenado = db_admins.obtener_hash(username)
     if hash_almacenado is None or not verificar_password(req.password_actual, hash_almacenado):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Contraseña actual incorrecta")
-    if len(req.password_nueva) < 8:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="La nueva contraseña debe tener al menos 8 caracteres",
-        )
-    if es_contrasena_publicada(req.password_nueva):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Esa contraseña está publicada en el repositorio del proyecto; elegí otra",
-        )
+    motivo = validar_password_nueva(req.password_nueva, username)
+    if motivo:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=motivo)
     db_admins.actualizar_password(username, generar_hash(req.password_nueva))
     log.info("Contraseña de administrador '%s' actualizada", username)
     csrf_token = secrets.token_urlsafe(32)

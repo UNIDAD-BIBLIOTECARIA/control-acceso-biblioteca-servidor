@@ -129,3 +129,19 @@ def test_verify_token_admin_revocado_si_el_usuario_ya_no_existe(monkeypatch):
     token = auth.create_token({"sub": "admin-borrado", "role": "admin"})
     with pytest.raises(auth.HTTPException):
         auth.verify_token(token)
+
+
+# --- validar_password_nueva ------------------------------------------------
+
+@pytest.mark.parametrize("password", [
+    "corta",                      # menos de 12 caracteres
+    "x" * 129,                    # más de 128
+    "Administrador",              # igual al username (sin distinguir mayúsculas)
+    "biblioteca2026",             # publicada en el historial del repo
+])
+def test_validar_password_nueva_rechaza(password):
+    assert auth.validar_password_nueva(password, "administrador") is not None
+
+
+def test_validar_password_nueva_acepta_una_contrasena_razonable():
+    assert auth.validar_password_nueva("una frase larga de verdad", "admin") is None

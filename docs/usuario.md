@@ -60,7 +60,7 @@ Gráficos para análisis de uso a lo largo del tiempo.
 ## Cambiar tu contraseña
 
 1. Con sesión iniciada, presioná **Cambiar contraseña** (arriba, junto a "Cerrar sesión").
-2. Ingresá tu contraseña actual y la nueva (mínimo 8 caracteres).
+2. Ingresá tu contraseña actual y la nueva (entre 12 y 128 caracteres, distinta de tu nombre de usuario).
 3. Confirmá. La próxima vez que inicies sesión, usá la contraseña nueva.
 
 Si te equivocás en la contraseña actual, el sistema te avisa y no hace el cambio.

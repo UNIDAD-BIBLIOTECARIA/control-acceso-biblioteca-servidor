@@ -11,10 +11,13 @@ Este script sirve para fijar esa contraseña inicial sin que quien hace el
 despliegue la vea en texto plano: ejecutalo en TU máquina — no en el
 servidor de despliegue — y copiale solo la línea `ADMIN_PASS_HASH=...`
 resultante (mismo principio que el PIN de administrador del kiosko, ver
-../biblioteca_cliente/cliente/setup.py). Si no te importa que quien
-despliega conozca la contraseña inicial (total, se cambia después), podés
-saltarte este script y usar directamente el hash de ejemplo del
-`.env.example`.
+../biblioteca_cliente/cliente/setup.py). No uses el hash de ejemplo del
+`.env.example`: es público y el servidor se niega a sembrar el admin
+inicial con él (`db/schema.py`).
+
+Aplica la misma política que `PUT /auth/password` (longitud entre 12 y 128
+caracteres y no estar entre las contraseñas publicadas en el repo), para que
+la contraseña inicial no sea más débil que las que el panel aceptaría.
 
 Uso:
     python3 generar_hash_admin.py
@@ -24,7 +27,13 @@ import hashlib
 import secrets
 import sys
 
+from contrasenas_publicadas import es_contrasena_publicada
+
 ITERACIONES = 600_000  # recomendación OWASP (2023+) para PBKDF2-HMAC-SHA256
+# Mismos límites que PASSWORD_MIN_LONGITUD/PASSWORD_MAX_LONGITUD en routers/auth.py (no se
+# importan de ahí porque ese módulo exige SECRET_KEY y la conexión a la BD al importarse).
+MIN_LONGITUD = 12
+MAX_LONGITUD = 128
 
 
 def generar_hash(password: str) -> str:
@@ -35,8 +44,10 @@ def generar_hash(password: str) -> str:
 
 def main() -> None:
     password = getpass.getpass("Contraseña de administrador (no se muestra en pantalla): ").strip()
-    if not password:
-        sys.exit("La contraseña no puede estar vacía.")
+    if not MIN_LONGITUD <= len(password) <= MAX_LONGITUD:
+        sys.exit(f"La contraseña debe tener entre {MIN_LONGITUD} y {MAX_LONGITUD} caracteres.")
+    if es_contrasena_publicada(password):
+        sys.exit("Esa contraseña está publicada en el historial del repo; elegí otra.")
     confirmacion = getpass.getpass("Confírmala: ").strip()
     if password != confirmacion:
         sys.exit("Las contraseñas no coinciden.")

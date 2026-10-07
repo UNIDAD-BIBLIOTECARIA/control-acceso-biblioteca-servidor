@@ -65,7 +65,7 @@ No existe un sistema formal de migraciones (Alembic, etc.): los cambios de esque
 Body `{username, password}` → `{access_token, token_type}`. Compara contra la tabla `admins` en la base de datos (ver sección de Seguridad). 401 si no coincide.
 
 ### `PUT /auth/password` 🔒
-Body `{password_actual, password_nueva}` → `{ok: true}`. Permite al administrador autenticado cambiar su propia contraseña (mínimo 8 caracteres). 401 si `password_actual` no coincide.
+Body `{password_actual, password_nueva}` → `{ok: true}`. Permite al administrador autenticado cambiar su propia contraseña (entre 12 y 128 caracteres, distinta del nombre de usuario y de las contraseñas publicadas en el historial del repo; 422 si no cumple). 401 si `password_actual` no coincide.
 
 ### `POST /sync` — kiosko, público
 Body `{pc_id, pc_nombre?, ip?, sesiones: [Sesion]}` → `{recibidos, insertados, timestamp}`.
