@@ -178,6 +178,8 @@ Los backups tienen la misma PII de estudiantes que la base — guardarlos fuera 
 
 ## Observabilidad
 
+Los logs de los contenedores (`docker compose -f docker-compose.prod.yml logs`) rotan solos: 5 archivos de 10 MB por servicio. En ellos los carnets aparecen como seudónimo (`est-…`, HMAC con `SECRET_KEY`, ver `servidor/seudonimo.py`) y no en claro. Para buscar los eventos de un estudiante concreto, calcular su seudónimo con `docker compose -f docker-compose.prod.yml exec servidor python seudonimo.py AB12345`.
+
 Más allá del `HEALTHCHECK` de Docker (que solo dice si el proceso responde), `GET /metrics` expone métricas en formato Prometheus (conteo y latencia de requests por endpoint/método/status — nada de negocio ni PII). Apagado por defecto; activarlo con `ENABLE_METRICS=true` en el `.env`. Sin autenticación propia — si se activa en producción, restringir el acceso a nivel de red (`SERVER_BIND_IP` y, si hace falta, reglas en la cadena `DOCKER-USER` de iptables, no UFW/firewalld, que Docker se salta) para que solo el scraper de Prometheus llegue a ese puerto.
 
 ## Checklist de seguridad antes de producción

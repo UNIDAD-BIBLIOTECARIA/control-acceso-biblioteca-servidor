@@ -1,6 +1,8 @@
 import logging
 from datetime import datetime
 
+from seudonimo import seudonimo
+
 from . import pcs as db_pcs
 from .connection import conexion
 from .estudiantes import asegurar_desde_sesion
@@ -30,7 +32,7 @@ def registrar_sync(payload, ip):
                 except Exception:
                     log.exception(
                         "No se pudo crear el estudiante %s durante sync — "
-                        "se registra la sesión igual", s.carnet,
+                        "se registra la sesión igual", seudonimo(s.carnet),
                     )
 
             cursor.execute("""

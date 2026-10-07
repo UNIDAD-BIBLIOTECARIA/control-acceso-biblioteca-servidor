@@ -42,10 +42,20 @@
 # recursos del host. Ajustado al tamaño esperado del despliegue (16 kioscos,
 # tráfico bajo); subir si el uso real se acerca al límite.
 
+# Los logs de ambos contenedores (stdout) rotan a 5 archivos de 10 MB: el
+# driver json-file de Docker no rota por defecto y, en un servicio que corre
+# meses, crecería hasta llenar el disco de la PC maestra.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   db:
     image: mysql:8.4
     restart: unless-stopped
+    logging: *logging
     environment:
       MYSQL_DATABASE: ${DB_NAME}
       MYSQL_USER: ${DB_USER}
@@ -78,6 +88,7 @@ services:
   servidor:
     build: ./servidor
     restart: unless-stopped
+    logging: *logging
     ports:
       - "${SERVER_BIND_IP:?definir SERVER_BIND_IP en .env (IP de la PC maestra en la LAN de los kioscos)}:8000:8000"
     depends_on:

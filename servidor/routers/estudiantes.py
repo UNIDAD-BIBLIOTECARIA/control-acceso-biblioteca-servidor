@@ -4,6 +4,7 @@ from db import estado as db_estado
 from db import estudiantes as db_estudiantes
 from fastapi import APIRouter, Depends, HTTPException, Request
 from models import Estudiante
+from seudonimo import seudonimo
 
 from routers.auth import (
     limitar_escrituras_kiosko,
@@ -27,9 +28,9 @@ def registrar_estudiante(
     try:
         db_estudiantes.crear(est)
     except db_estudiantes.CarnetYaRegistrado:
-        log.warning("Alta de estudiante %s rechazada (carnet ya registrado) — %s", est.carnet, _actor_ip(request, actor))
+        log.warning("Alta de estudiante %s rechazada (carnet ya registrado) — %s", seudonimo(est.carnet), _actor_ip(request, actor))
         raise HTTPException(status_code=409, detail="Carnet ya registrado") from None
-    log.info("Alta de estudiante %s — %s", est.carnet, _actor_ip(request, actor))
+    log.info("Alta de estudiante %s — %s", seudonimo(est.carnet), _actor_ip(request, actor))
     return {"carnet": est.carnet}
 
 
@@ -55,7 +56,7 @@ def actualizar_estudiante(
     # ajenas, un kiosko solo puede editar al estudiante que tiene la sesión
     # abierta en esa misma PC según su último heartbeat. El admin no se restringe.
     if actor.get("role") == "kiosk" and not db_estado.carnet_activo_en_pc(actor.get("pc_id"), carnet):
-        log.warning("Actualización de estudiante %s rechazada (sin sesión activa en la PC) — %s", carnet, _actor_ip(request, actor))
+        log.warning("Actualización de estudiante %s rechazada (sin sesión activa en la PC) — %s", seudonimo(carnet), _actor_ip(request, actor))
         raise HTTPException(
             status_code=403,
             detail="Solo se pueden editar los datos del estudiante con sesión activa en esta PC",
@@ -63,9 +64,9 @@ def actualizar_estudiante(
     try:
         db_estudiantes.actualizar(carnet, est)
     except db_estudiantes.EstudianteNoEncontrado:
-        log.warning("Actualización de estudiante %s rechazada (no encontrado) — %s", carnet, _actor_ip(request, actor))
+        log.warning("Actualización de estudiante %s rechazada (no encontrado) — %s", seudonimo(carnet), _actor_ip(request, actor))
         raise HTTPException(status_code=404, detail="Estudiante no encontrado") from None
-    log.info("Actualización de estudiante %s — %s", carnet, _actor_ip(request, actor))
+    log.info("Actualización de estudiante %s — %s", seudonimo(carnet), _actor_ip(request, actor))
     return {"ok": True, "carnet": carnet}
 
 
@@ -74,9 +75,9 @@ def eliminar_estudiante(carnet: str, request: Request, actor: dict = Depends(req
     try:
         db_estudiantes.eliminar(carnet)
     except db_estudiantes.EstudianteNoEncontrado:
-        log.warning("Baja de estudiante %s rechazada (no encontrado) — %s", carnet, _actor_ip(request, actor))
+        log.warning("Baja de estudiante %s rechazada (no encontrado) — %s", seudonimo(carnet), _actor_ip(request, actor))
         raise HTTPException(status_code=404, detail="Estudiante no encontrado") from None
     except db_estudiantes.TieneSesionesRegistradas:
-        log.warning("Baja de estudiante %s rechazada (tiene sesiones registradas) — %s", carnet, _actor_ip(request, actor))
+        log.warning("Baja de estudiante %s rechazada (tiene sesiones registradas) — %s", seudonimo(carnet), _actor_ip(request, actor))
         raise HTTPException(status_code=409, detail="No se puede eliminar: tiene sesiones registradas") from None
-    log.info("Baja de estudiante %s — %s", carnet, _actor_ip(request, actor))
+    log.info("Baja de estudiante %s — %s", seudonimo(carnet), _actor_ip(request, actor))
