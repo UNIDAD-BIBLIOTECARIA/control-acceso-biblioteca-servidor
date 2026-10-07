@@ -3,7 +3,14 @@ name: Auditoría de dependencias y calidad de código
 # Corre pip-audit en cada push/PR y una vez por semana para no depender de
 # que alguien lo ejecute a mano, un chequeo de sintaxis barato (py_compile)
 # como red mínima, la suite de tests de servidor/tests/ (pytest), linting
-# (ruff, configurado en pyproject.toml) y SAST (bandit).
+# (ruff, configurado en pyproject.toml), SAST (bandit), escaneo de la imagen
+# Docker construida (grype) y búsqueda de secretos en el árbol (gitleaks).
+#
+# Las acciones van fijadas por SHA de commit (con la versión en el comentario)
+# y no por tag: un tag se puede mover, así que quien comprometa el repo de la
+# acción podría cambiar lo que corre acá. Dependabot (ecosistema
+# github-actions) actualiza los SHA. Las herramientas que se instalan con pip
+# también van con versión fija.
 
 on:
   push:
@@ -13,24 +20,28 @@ on:
     - cron: "0 6 * * 1" # lunes 06:00 UTC
   workflow_dispatch:
 
+# El token de cada job solo puede leer el repo: ningún job necesita escribir.
+permissions:
+  contents: read
+
 jobs:
   pip-audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - name: Instalar pip-audit
-        run: pip install pip-audit
+        run: pip install pip-audit==2.10.1
       - name: Auditar servidor/requirements.txt
         run: pip-audit -r servidor/requirements.txt
 
   sintaxis:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - name: Compilar todos los .py (detecta errores de sintaxis)
@@ -39,8 +50,8 @@ jobs:
   tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - name: Instalar dependencias (incluye pytest)
@@ -51,8 +62,8 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - name: Instalar ruff
@@ -63,8 +74,8 @@ jobs:
   sast:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - name: Instalar bandit
@@ -73,3 +84,37 @@ jobs:
       # su propia sección, hay que pasarle el archivo explícitamente.
       - name: SAST (excepciones documentadas y justificadas en pyproject.toml)
         run: bandit -r servidor -x servidor/tests -c pyproject.toml
+
+  imagen:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # --pull: escanear contra la imagen base vigente, que es la que tendría
+      # un despliegue nuevo, y no contra una vieja cacheada.
+      - name: Construir la imagen del servidor
+        run: docker build --pull -t biblioteca-servidor:ci ./servidor
+      # Falla con vulnerabilidades altas o críticas que ya tengan corrección
+      # (subir la dependencia o reconstruir con la base nueva). Las que todavía
+      # no tienen parche no bloquean, porque no hay nada que hacer en este repo.
+      - name: Escanear vulnerabilidades (grype)
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: biblioteca-servidor:ci
+          severity-cutoff: high
+          only-fixed: true
+          output-format: table
+
+  secretos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # Escanea el árbol actual, no todo el historial: las contraseñas que ya
+      # se filtraron en commits viejos están documentadas y rechazadas por el
+      # propio servidor (contrasenas_publicadas.py) y harían fallar el job
+      # para siempre. Lo que importa acá es que no entre un secreto nuevo.
+      # Imagen fijada por digest por el mismo motivo que las acciones por SHA.
+      - name: Buscar secretos (gitleaks)
+        run: >-
+          docker run --rm -v "$PWD:/repo:ro"
+          ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+          dir /repo --no-banner --redact
