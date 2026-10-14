@@ -1,9 +1,12 @@
 # Esquema de base de datos — Biblioteca Control de Acceso
 
 Fuente de verdad: [`schema.py`](./schema.py) (`init_db()`), ejecutado en cada
-arranque del servidor. No hay sistema de migraciones formal: los cambios de
-esquema se aplican como `ALTER TABLE` idempotentes al final de `init_db()`.
-Este documento refleja el estado **final** (tras esas migraciones).
+arranque del servidor. Las bases creadas con versiones anteriores se ponen al
+día con las migraciones versionadas de `MIGRACIONES` (ver el final de este
+documento). Este documento refleja el estado **final** (tras esas migraciones).
+
+Las columnas `DATETIME` guardan hora local de El Salvador (`TZ` de los
+contenedores) sin zona, salvo las marcadas como UTC.
 
 Motor: MySQL, `ENGINE=InnoDB` en todas las tablas.
 
@@ -33,6 +36,8 @@ erDiagram
         datetime ultima_conexion
         varchar ip_reportada
         datetime ultimo_mantenimiento
+        varchar api_key_hash
+        datetime api_key_generada
     }
 
     sesiones {
@@ -69,7 +74,26 @@ erDiagram
         decimal horas_uso_acumuladas
         datetime ultima_lectura
     }
+
+    admins {
+        varchar username PK
+        varchar password_hash
+        datetime actualizado
+    }
+
+    tokens_revocados {
+        varchar jti PK
+        datetime expira
+    }
+
+    schema_migraciones {
+        int version PK
+        varchar descripcion
+        datetime aplicada
+    }
 ```
+
+`admins`, `tokens_revocados` y `schema_migraciones` no tienen relaciones con el resto.
 
 ## Tablas
 
@@ -98,7 +122,11 @@ Catálogo de equipos (kioscos) registrados.
 | `nombre` | `VARCHAR(255)` | |
 | `ultima_conexion` | `DATETIME` | |
 | `ip_reportada` | `VARCHAR(45)` | IPv4/IPv6 |
-| `ultimo_mantenimiento` | `DATETIME` | Añadida por migración (`ALTER TABLE ... ADD COLUMN`) |
+| `ultimo_mantenimiento` | `DATETIME` | Fecha del último mantenimiento (`POST /pcs/{pc_id}/mantenimiento`) |
+| `api_key_hash` | `VARCHAR(255)` | SHA-256 de la API key de la PC; `NULL` = sin key propia |
+| `api_key_generada` | `DATETIME` | Cuándo se generó o rotó la key |
+
+`ultima_conexion` e `ip_reportada` se actualizan en cada `POST /estado` y `POST /sync`; `/reportes/pcs-activas` usa `ultima_conexion`.
 
 ### `sesiones`
 
@@ -149,6 +177,33 @@ Telemetría de hardware por PC (una fila por PC, se sobrescribe).
 | `horas_uso_acumuladas` | `DECIMAL(8,2)` | `NOT NULL DEFAULT 0` |
 | `ultima_lectura` | `DATETIME` | |
 
+### `admins`
+
+Administradores del panel. Se siembra el primero desde `ADMIN_USER`/`ADMIN_PASS_HASH` si la tabla está vacía.
+
+| Columna | Tipo | Notas |
+|---|---|---|
+| `username` | `VARCHAR(100)` | **PK** |
+| `password_hash` | `VARCHAR(255)` | `NOT NULL` · `pbkdf2_sha256$<iteraciones>$<salt>$<hash>` |
+| `actualizado` | `DATETIME` | UTC · último cambio de contraseña; los JWT emitidos antes quedan revocados |
+
+### `tokens_revocados`
+
+JWT dados de baja con `POST /auth/logout`. Las filas vencidas se purgan en cada logout.
+
+| Columna | Tipo | Notas |
+|---|---|---|
+| `jti` | `VARCHAR(64)` | **PK** · claim `jti` del token |
+| `expira` | `DATETIME` | `NOT NULL` · UTC · `exp` del token. Índice `idx_tokens_revocados_expira` |
+
+### `schema_migraciones`
+
+| Columna | Tipo | Notas |
+|---|---|---|
+| `version` | `INT` | **PK** · número de la migración en `MIGRACIONES` |
+| `descripcion` | `VARCHAR(255)` | `NOT NULL` |
+| `aplicada` | `DATETIME` | `NOT NULL` · UTC |
+
 ## Notas de migración vigentes
 
 Las migraciones están versionadas en `MIGRACIONES` (`db/schema.py`) y se aplican
@@ -159,7 +214,9 @@ MySQL no es transaccional, cada migración es idempotente: si falla a mitad, se
 reintenta en el siguiente arranque. Hacé un backup (`scripts/backup_db.sh`)
 antes de desplegar una versión que agregue migraciones.
 
-- `sesiones.carnet` se relajó a `NULL` (permite sesiones de invitado sin carnet).
-- `estudiantes.fecha_nacimiento`: si una base preexistente la tiene como `DATE`,
+1. `pcs`: se agregan `ultimo_mantenimiento`, `api_key_hash` y `api_key_generada` si faltan.
+2. `sesiones.carnet` se relajó a `NULL` (permite sesiones de invitado sin carnet).
+3. Se elimina `estudiantes.departamento` si existe.
+4. `estudiantes.fecha_nacimiento`: si una base preexistente la tiene como `DATE`,
   se migra a `YEAR` vía columna auxiliar (`fecha_nacimiento_new`) para evitar
   que MySQL trunque el valor a `0000` en un `MODIFY` directo.

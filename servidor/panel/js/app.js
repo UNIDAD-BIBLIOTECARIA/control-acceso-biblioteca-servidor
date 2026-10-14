@@ -92,8 +92,17 @@ function escapeHtml(value) {
 
 function fmtHora(iso) {
     if (!iso) return '—';
-    const d = new Date(iso.replace(' ', 'T') + (iso.includes('T') ? '' : 'Z'));
+    // El servidor guarda y devuelve horas locales (TZ America/El_Salvador) sin
+    // zona: se interpretan como hora local, nunca como UTC.
+    const d = new Date(iso.replace(' ', 'T'));
     return d.toLocaleTimeString('es-GT', { hour: '2-digit', minute: '2-digit' });
+}
+
+// Fecha YYYY-MM-DD en la zona horaria del navegador. `toISOString()` da la
+// fecha en UTC: en El Salvador (UTC-6), desde las 18:00 ya sería "mañana".
+function fechaLocalISO(d = new Date()) {
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 function actualizarSelect(id, opciones, placeholder) {

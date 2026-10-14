@@ -379,7 +379,7 @@ def test_estado_con_api_key_de_otra_pc_da_403(client, monkeypatch):
 
 def test_estado_con_api_key_propia_funciona(client, monkeypatch):
     monkeypatch.setattr(auth_module.db_pcs, "obtener_api_key_hash", lambda pc_id: auth_module.hash_api_key("clave-pc01"))
-    monkeypatch.setattr(db_estado, "actualizar_estado", lambda payload: "2026-01-01T00:00:00")
+    monkeypatch.setattr(db_estado, "actualizar_estado", lambda payload, ip=None: "2026-01-01T00:00:00")
     r = client.post(
         "/estado",
         json={"pc_id": "PC-01", "sesion_activa": True},

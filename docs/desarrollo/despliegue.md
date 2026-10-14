@@ -4,7 +4,7 @@ Documentación de desarrollo, parte 1 de 2. Para cómo está organizado el códi
 
 ## Requisitos
 
-- Docker + Docker Compose (recomendado), **o** Python 3.10+ y MySQL 8.4 accesible si se despliega sin Docker.
+- Docker + Docker Compose v2 (recomendado), **o** Python 3.11+ y MySQL 8.4 accesible si se despliega sin Docker.
 - Red local entre la PC maestra (donde corre este servidor) y las PCs hijas (kioscos de `biblioteca_cliente`).
 - Opcional: túnel Cloudflare (`cloudflared/`, no incluido en este repo) para exponer el panel fuera de la red local sin abrir puertos.
 
@@ -14,8 +14,8 @@ Hay **dos archivos independientes**, ninguno se combina con el otro vía `-f`:
 
 | Archivo | Uso | Diferencias clave |
 |---|---|---|
-| `docker-compose.yml` | Desarrollo (`docker compose up` por defecto) | Monta `./servidor` como volumen, `uvicorn --reload` (hot-reload sin rebuild), publica MySQL en `3307:3306` para conectarte con MySQL Workbench / `mysql` CLI |
-| `docker-compose.prod.yml` | Producción (standalone) | No monta código (la imagen ya lo trae copiado), sin `--reload`, **no publica el puerto de MySQL** al host — `servidor` llega a `db` por la red interna de Compose |
+| `docker-compose.yml` | Desarrollo (`docker compose up` por defecto) | Monta `./servidor` como volumen, `uvicorn --reload` (hot-reload sin rebuild). Publica la API solo en `127.0.0.1:8000` y MySQL en `127.0.0.1:3307` (MySQL Workbench / `mysql` CLI) — no es alcanzable desde los kioscos |
+| `docker-compose.prod.yml` | Producción (standalone) | No monta código (la imagen ya lo trae copiado), sin `--reload`, publica la API en `SERVER_BIND_IP:8000`, **no publica el puerto de MySQL** al host — `servidor` llega a `db` por la red interna de Compose. Rota los logs y endurece el contenedor (solo lectura, sin capabilities) |
 
 Ambos levantan los mismos dos servicios:
 - **`db`**: `mysql:8.4`, healthcheck vía `mysqladmin ping`, volumen persistente `db_data`, timezone `America/El_Salvador`.
@@ -29,8 +29,9 @@ cp .env.example .env
 
 Editar `.env` (ver tabla completa de variables más abajo). Como mínimo hay que rellenar:
 
-- `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `MYSQL_ROOT_PASSWORD`
+- `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `MYSQL_ROOT_PASSWORD` (`openssl rand -hex 24` para las contraseñas)
 - `SECRET_KEY` — **obligatoria**, viene vacía en el ejemplo (`openssl rand -hex 32`)
+- `ADMIN_USER` y `ADMIN_PASS_HASH` propio (ver abajo)
 - `SERVER_BIND_IP` — **obligatoria en producción** (`docker-compose.prod.yml` no arranca sin ella): IP de la PC maestra en la LAN de los kioscos
 - `KIOSK_API_KEY` — opcional, solo como respaldo mientras se migran PCs a una key propia (ver más abajo); dejarla vacía cierra esa vía de respaldo
 
@@ -50,11 +51,13 @@ docker compose up -d --build
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-En desarrollo el backend queda disponible en `http://localhost:8000`, el panel en `http://localhost:8000/` o `/panel`.
+En desarrollo el backend queda disponible en `http://localhost:8000`, el panel en `http://localhost:8000/` o `/panel`. En producción, en `http(s)://<SERVER_BIND_IP>:8000/`.
+
+Comprobar que arrancó bien: `docker compose -f docker-compose.prod.yml ps` debe mostrar `servidor` como `healthy`, y en `docker compose -f docker-compose.prod.yml logs servidor` debe aparecer `Administrador inicial '<usuario>' creado` la primera vez. Si en cambio aparece un error sobre `ADMIN_PASS_HASH`, no se creó ningún administrador: corregir el `.env` y reiniciar.
 
 ### Datos de demostración (opcional)
 
-Para poblar estudiantes, PCs, hardware, estado en vivo y sesiones históricas de ejemplo (útil para ver tablas/gráficos sin cargar datos reales):
+Solo para desarrollo o una demo — **no** correrlo contra la base de producción (`--reset` borra los datos). Pobla estudiantes, PCs, hardware, estado en vivo y sesiones históricas de ejemplo (útil para ver tablas/gráficos sin cargar datos reales):
 
 ```bash
 docker compose exec -T servidor python seed_demo.py --reset
@@ -64,11 +67,12 @@ docker compose exec -T servidor python seed_demo.py --reset
 
 ## Opción alternativa: local sin Docker
 
-Requiere un MySQL accesible. Variables con default en `servidor/db/connection.py`: `DB_HOST=localhost`, `DB_PORT=3306`, usuario/contraseña `biblioteca`.
+Requiere Python 3.11+ y un MySQL 8.4 accesible con la base ya creada. `DB_USER`, `DB_PASSWORD` y `SECRET_KEY` son obligatorias (el servidor no arranca sin ellas); `DB_HOST` (default `localhost`), `DB_PORT` (default `3306`) y `DB_NAME` (default `biblioteca`) son opcionales.
 
 ```bash
 cd servidor
 pip install -r requirements.txt
+set -a; . ../.env; set +a      # exporta las variables del .env
 uvicorn main:app --reload
 ```
 
@@ -87,9 +91,13 @@ uvicorn main:app --reload
 | `CORS_ORIGINS` | No | Orígenes separados por coma para acceso cross-origin. Vacío = sin CORS extra (el panel se sirve desde el mismo origen que la API). |
 | `LOGIN_MAX_INTENTOS` | No | Default 5. Intentos fallidos de `/auth/login` antes de bloquear temporalmente la IP. |
 | `LOGIN_BLOQUEO_MINUTOS` | No | Default 15. Minutos de bloqueo tras exceder `LOGIN_MAX_INTENTOS`. |
-| `TRUSTED_PROXIES` | No | IPs separadas por coma de reverse proxies/túneles de confianza (p. ej. Cloudflare Tunnel) autorizados a añadir a `X-Forwarded-For` la IP real del cliente para el rate limiting de `/auth/login`. Se toma la IP más a la derecha del header que no sea uno de estos proxies, porque lo que queda a su izquierda lo puede fijar el propio cliente. Vacío (default) = nunca se confía en el header, siempre se usa la IP de la conexión TCP directa. Solo hace falta si el servidor corre detrás de un proxy — si no, todas las conexiones legítimas compartirían la IP del proxy y un solo atacante podría bloquear a todos los administradores. |
+| `TOKEN_EXPIRE_HOURS` | No | Default 24. Horas de validez de la sesión del panel (JWT). Cambiar la contraseña o cerrar sesión la invalida antes. |
+| `ESTUDIANTES_MAX_LECTURAS_MIN` | No | Default 30. Consultas por minuto **de cada PC** a `GET /estudiantes/{carnet}` con su API key. El panel (JWT) no tiene este límite. |
+| `KIOSKO_MAX_ESCRITURAS_MIN` | No | Default 60. Escrituras por minuto **de cada PC** con su API key (`/sync`, `/estado`, `/pcs/{id}/hardware`, alta/edición de estudiantes; en `/sync` cada estudiante nuevo cuenta como una escritura más). Con el heartbeat de 30 s un kiosko usa unas 4–5 por minuto. |
+| `TRUSTED_PROXIES` | No | IPs separadas por coma de reverse proxies/túneles de confianza (p. ej. Cloudflare Tunnel) autorizados a añadir a `X-Forwarded-For` la IP real del cliente para el rate limiting de `/auth/login`. Se toma la IP más a la derecha del header que no sea uno de estos proxies, porque lo que queda a su izquierda lo puede fijar el propio cliente. Vacío (default) = nunca se confía en el header, siempre se usa la IP de la conexión TCP directa. Solo hace falta si el servidor corre detrás de un proxy — si no, todas las conexiones legítimas compartirían la IP del proxy y un solo atacante podría bloquear a todos los administradores. Hay que poner la IP con la que el proxy llega **al contenedor**: si `cloudflared` corre en el mismo host suele ser la puerta de enlace de la red de Docker (p. ej. `172.18.0.1`); se puede confirmar con un login fallido a propósito, que queda en los logs como `Login fallido desde <ip>`. |
 | `MAX_BODY_SIZE_BYTES` | No | Default 5 000 000 (5MB). Límite de tamaño de body para `POST`/`PUT`/`PATCH`. |
 | `SYNC_MAX_SESIONES` | No | Default 100. Máximo de sesiones por lote en `POST /sync`. |
+| `ENABLE_METRICS` | No | Default deshabilitado. En `true`/`1`/`yes` habilita `GET /metrics` (Prometheus, sin autenticación propia — ver **Observabilidad**). |
 | `ENABLE_API_DOCS` | No | Default deshabilitado. En `true`/`1`/`yes` habilita `/docs`, `/redoc` y `/openapi.json` (documentación interactiva de la API, sin autenticación). Dejar apagado en producción; solo activar para desarrollo local o debugging puntual. |
 | `TLS_CERT_PATH` / `TLS_KEY_PATH` | No (recomendado) | Rutas *dentro del contenedor* al certificado/clave del servidor. Vacías = uvicorn sirve HTTP plano. Ver sección **TLS** abajo. |
 | `TLS_CERTS_DIR` | No | Default `./certs`. Carpeta en el **host** que `docker-compose.prod.yml` monta en `/certs` (solo lectura) dentro del contenedor — ahí es donde deben estar los archivos que apuntan `TLS_CERT_PATH`/`TLS_KEY_PATH`. **Nunca** debe contener `ca.key` (el contenedor aborta si la encuentra). |
@@ -191,7 +199,7 @@ Más allá del `HEALTHCHECK` de Docker (que solo dice si el proceso responde), `
 - [ ] `SERVER_BIND_IP` fijada a la IP de la interfaz de la LAN de los kioscos, y comprobado desde una red que no debería tener acceso (p. ej. Wi-Fi de invitados) que el puerto `8000` no responde. No confiar solo en UFW/firewalld para eso: Docker se los salta con sus propias reglas de iptables. Si hace falta filtrar además por IP de origen dentro de esa LAN, usar la cadena `DOCKER-USER` de iptables.
 - [ ] `CORS_ORIGINS` configurado solo si el panel se sirve desde un origen distinto a la API (no es necesario por defecto).
 - [ ] `TLS_CERT_PATH`/`TLS_KEY_PATH` configuradas (ver sección **TLS**) y `ca.pem` distribuido a los 16 kioscos — si se decide operar sin TLS a propósito, confirmar que cada `config.ini` tiene `permitir_http_inseguro = true` fijado conscientemente, no por omisión.
-- [ ] Si se expone fuera de la red local, hacerlo vía túnel Cloudflare (`cloudflared/`) en lugar de abrir puertos directamente, con `BEHIND_HTTPS_PROXY=true` para que la cookie de sesión del panel lleve `Secure` y se envíe HSTS.
+- [ ] Si se expone fuera de la red local, hacerlo vía túnel Cloudflare (`cloudflared/`) en lugar de abrir puertos directamente, con `BEHIND_HTTPS_PROXY=true` para que la cookie de sesión del panel lleve `Secure` y se envíe HSTS, y `TRUSTED_PROXIES` con la IP del túnel (ver tabla de variables) para que el bloqueo de login sea por cliente y no por túnel.
 - [ ] `backup_db.sh` agendado en cron en la PC maestra (ver sección **Backups de MySQL**) y probado al menos una vez `restore_db.sh` contra una base de prueba.
 - [ ] `ENABLE_API_DOCS` sin fijar (o en `false`) — `/docs`/`/redoc`/`/openapi.json` quedan deshabilitados.
 - [ ] Una sola réplica del servicio `servidor` (los `docker-compose*.yml` de este repo no definen `deploy.replicas`, así que por defecto ya es una — solo aplica si en algún momento se orquesta distinto, p. ej. Swarm/Kubernetes). Dentro del contenedor, `docker-entrypoint.sh` ya aborta el arranque si `UVICORN_WORKERS` viene fijada en algo distinto de `1`: el rate limiting de `/auth/login` y las ventanas de lecturas/escrituras de kiosko (`servidor/routers/auth.py`) se llevan en memoria de un solo proceso, no en un almacén compartido.
@@ -218,7 +226,7 @@ Este servidor es la mitad "PC maestra": corre en **una sola PC** de la sala (o u
 4. Decidir si se usará TLS (recomendado). Si sí: correr `servidor/scripts/generar_ca.sh <IP-de-la-PC-maestra>` **ahora**, antes de configurar las PCs hijas, y completar `TLS_CERT_PATH`/`TLS_KEY_PATH` en el `.env` — ver sección **TLS** arriba.
 5. Levantar con `docker compose -f docker-compose.prod.yml up -d --build`.
 6. Verificar que responde: `curl http://<IP-PC-maestra>:8000/health` (o `curl -k https://<IP>:8000/health` con TLS) desde otra PC de la misma LAN — si no responde, revisar que `SERVER_BIND_IP` sea la IP correcta de esa interfaz (`docker compose -f docker-compose.prod.yml port servidor 8000`) antes de seguir.
-7. Entrar al panel (`http://<IP-PC-maestra>:8000/`), iniciar sesión con `ADMIN_USER`/la contraseña usada para generar `ADMIN_PASS_HASH`, y cambiarla desde el panel (botón "Cambiar contraseña").
+7. Entrar al panel (`http://<IP-PC-maestra>:8000/`, o `https://` con TLS), iniciar sesión con `ADMIN_USER`/la contraseña usada para generar `ADMIN_PASS_HASH`, y cambiarla desde el panel (botón "Cambiar contraseña").
 
 ### Fase 2 — cada PC hija (kiosko)
 
@@ -240,7 +248,7 @@ Repetir esto en **cada una** de las PCs de la sala (empezar con 2-3 antes de hac
 
 ### Fase 3 — verificación y rollout
 
-1. Con 2-3 PCs configuradas, en el panel de la PC maestra (pestaña "PCs") confirmar que cada una aparece, con heartbeat de estado y de hardware llegando, y que una sesión de prueba (login con un carnet de prueba) aparece en la pestaña "Sesiones".
+1. Con 2-3 PCs configuradas, en el panel de la PC maestra confirmar: en la pestaña "PCs", que cada una aparece como "Disponible" (heartbeat de estado llegando), con specs y horas en la tabla de mantenimiento (heartbeat de hardware) y la API key "Configurada"; en la pestaña "Sesiones", que el contador de "PCs activas" las incluye y que una sesión de prueba (login con un carnet de prueba) aparece en curso y, al cerrarla, con hora de fin.
 2. Recién con eso confirmado, repetir la Fase 2 en el resto de las PCs de la sala.
 3. (Opcional) exponer el panel fuera de la LAN vía túnel Cloudflare (`cloudflared/`, no incluido en este repo) en vez de abrir puertos hacia internet.
 4. Agendar en cron de la PC maestra `backup_db.sh` (ver sección **Backups de MySQL**) y, si hay TLS, `verificar_vencimiento_cert.sh` (ver sección **TLS**).

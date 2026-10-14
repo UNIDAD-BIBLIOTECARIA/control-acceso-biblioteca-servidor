@@ -1,6 +1,6 @@
 # Documentación — Biblioteca Servidor
 
-- **Guía de despliegue del sistema completo (servidor + todas las PCs, paso a paso)** → [`../../DESPLIEGUE.md`](../../DESPLIEGUE.md)
+- **Guía de despliegue del sistema completo (servidor + todas las PCs, paso a paso)** → [`desarrollo/despliegue.md`](./desarrollo/despliegue.md#orden-de-despliegue-del-sistema-completo-paso-a-paso)
 - **Para administradores del panel** → [`usuario.md`](./usuario.md)
 - **Para desarrolladores:**
   - [`desarrollo/despliegue.md`](./desarrollo/despliegue.md) — cómo instalar y desplegar (Docker Compose dev/prod, variables de entorno, checklist de seguridad)

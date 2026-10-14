@@ -1,5 +1,6 @@
 const Sesiones = {
     datos: [],
+    filtrados: [],
     _ticker: null,
 
     async cargar() {
@@ -13,13 +14,14 @@ const Sesiones = {
         if (pc)      params.set('pc_id',   pc);
 
         try {
-            const [sesiones, resumen] = await Promise.all([
+            const [sesiones, resumen, activas] = await Promise.all([
                 API.fetch(`/reportes/sesiones?${params}`),
                 API.fetch(`/reportes/resumen-dia?fecha=${fecha}`),
+                API.fetch('/reportes/pcs-activas'),
             ]);
 
             this.datos = sesiones;
-            this._renderResumen(resumen);
+            this._renderResumen(resumen, activas.length);
             this._actualizarFiltros(sesiones);
             this.filtrarLocal();
         } catch (e) { console.error(e); }
@@ -32,13 +34,15 @@ const Sesiones = {
             (!q       || (s.carnet||'').toLowerCase().includes(q) || (s.nombre||'').toLowerCase().includes(q)) &&
             (!facultad || s.facultad === facultad)
         );
+        this.filtrados = filtered;
         this._renderTabla(filtered);
     },
 
     exportarCSV() {
         const fecha = document.getElementById('filter-fecha')?.value || 'hoy';
         const headers = ['Carnet','Nombre','Carrera','Facultad','PC','Hora inicio','Hora fin','Minutos'];
-        const rows = this.datos.map(s => [
+        // Exporta exactamente lo que muestra la tabla, con los filtros locales aplicados.
+        const rows = this.filtrados.map(s => [
             s.carnet||'Invitado', s.nombre||'', s.carrera||'', s.facultad||'',
             s.pc_nombre||s.pc_id||'', s.hora_inicio, s.hora_fin||'', s.minutos??''
         ]);
@@ -135,7 +139,7 @@ const Sesiones = {
         this._ticker = null;
     },
 
-    _renderResumen(r) {
+    _renderResumen(r, pcsActivas) {
         const bar = document.getElementById('resumen-bar');
         if (!bar) return;
         bar.innerHTML = [
@@ -143,6 +147,8 @@ const Sesiones = {
             { val: r.estudiantes_unicos??0, lbl: 'Estudiantes únicos' },
             { val: r.pcs_usadas??0,        lbl: 'PCs usadas' },
             { val: r.minutos_promedio ? `${r.minutos_promedio} min` : '—', lbl: 'Promedio / sesión' },
+            // PCs que se comunicaron con el servidor en los últimos 5 minutos.
+            { val: pcsActivas ?? 0,        lbl: 'PCs activas' },
         ].map(i => `<div class="resumen-item"><div class="val">${i.val}</div><div class="lbl">${i.lbl}</div></div>`).join('');
     },
 
@@ -158,7 +164,7 @@ const Sesiones = {
     },
 
     init() {
-        const hoy = new Date().toISOString().split('T')[0];
+        const hoy = fechaLocalISO();
         const el = document.getElementById('filter-fecha');
         if (el && !el.value) el.value = hoy;
 

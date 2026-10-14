@@ -23,7 +23,9 @@ def listar_sesiones(fecha=None, pc_id=None, carnet=None, carrera=None, limit=500
         "ep.sesion_activa = 1",
         "ep.hora_inicio IS NOT NULL",
         "DATE(ep.hora_inicio) = %s",
-        "NOT EXISTS (SELECT 1 FROM sesiones sx WHERE sx.pc_id = ep.pc_id AND sx.hora_inicio = ep.hora_inicio AND sx.hora_fin IS NULL)",
+        # Si la sesión en curso ya llegó a `sesiones` por /sync (abierta, o ya cerrada
+        # y el heartbeat todavía no lo refleja), se muestra solo esa copia.
+        "NOT EXISTS (SELECT 1 FROM sesiones sx WHERE sx.pc_id = ep.pc_id AND sx.hora_inicio = ep.hora_inicio)",
     ]
     params_e = [target_date]
     if pc_id:
@@ -32,6 +34,9 @@ def listar_sesiones(fecha=None, pc_id=None, carnet=None, carrera=None, limit=500
     if carnet:
         where_e.append("ep.carnet = %s")
         params_e.append(carnet)
+    if carrera:
+        where_e.append("e2.carrera = %s")
+        params_e.append(carrera)
     where_estado_sql = "WHERE " + " AND ".join(where_e)
 
     all_params = params_s + params_e + [limit, offset]
@@ -104,7 +109,7 @@ def resumen_dia(fecha=None):
                 WHERE sesion_activa = 1 AND hora_inicio IS NOT NULL
                   AND DATE(hora_inicio) = %s
                   AND NOT EXISTS (
-                      SELECT 1 FROM sesiones sx WHERE sx.pc_id = estado_pcs.pc_id AND sx.hora_inicio = estado_pcs.hora_inicio AND sx.hora_fin IS NULL
+                      SELECT 1 FROM sesiones sx WHERE sx.pc_id = estado_pcs.pc_id AND sx.hora_inicio = estado_pcs.hora_inicio
                   )
             ) AS combinadas
         """, (target, target)).fetchone()

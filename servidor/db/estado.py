@@ -6,11 +6,14 @@ from .estudiantes import asegurar_desde_sesion
 from .umbrales import UMBRAL_DISPONIBLE_MINUTOS
 
 
-def actualizar_estado(payload):
+def actualizar_estado(payload, ip=None):
     with conexion() as conn:
         ahora = datetime.now().isoformat()
 
-        db_pcs.asegurar(conn, payload.pc_id, payload.pc_nombre)
+        # El heartbeat llega cada ~30s haya o no sesión, a diferencia de /sync
+        # (solo cuando hay sesiones cerradas que enviar): es lo que mantiene al
+        # día `pcs.ultima_conexion` para el indicador de PCs activas.
+        db_pcs.upsert_conexion(conn, payload.pc_id, payload.pc_nombre, ahora, ip)
 
         if payload.carnet:
             fecha_hoy = datetime.now().date().isoformat()

@@ -43,15 +43,21 @@ const Estudiantes = {
                 <td data-label="Facultad">${escapeHtml(e.facultad) || '—'}</td>
                 <td data-label="Sexo">${escapeHtml(e.sexo) || '—'}</td>
                 <td data-label="Registro">${escapeHtml(e.fecha_registro) || '—'}</td>
-                <td class="student-action" data-label="Acciones"><button class="btn-edit-est" data-carnet="${carnet}">Editar</button></td>
+                <td class="student-action" data-label="Acciones">
+                    <button class="btn-edit-est" data-carnet="${carnet}">Editar</button>
+                    <button class="btn-edit-est btn-del-est" data-carnet="${carnet}" data-nombre="${nombre}">Eliminar</button>
+                </td>
             `;
             tbody.appendChild(tr);
         });
         tbody.querySelectorAll('.student-row-toggle').forEach(btn =>
             btn.addEventListener('click', () => this._toggleFila(btn))
         );
-        tbody.querySelectorAll('.btn-edit-est').forEach(btn =>
+        tbody.querySelectorAll('.btn-edit-est:not(.btn-del-est)').forEach(btn =>
             btn.addEventListener('click', () => this._abrirEditar(btn.dataset.carnet))
+        );
+        tbody.querySelectorAll('.btn-del-est').forEach(btn =>
+            btn.addEventListener('click', () => this._eliminar(btn.dataset.carnet, btn.dataset.nombre))
         );
     },
 
@@ -122,8 +128,18 @@ const Estudiantes = {
         this._abrirModal('Editar estudiante', est);
     },
 
+    // El servidor responde 409 si el estudiante tiene sesiones registradas:
+    // el historial de uso no se borra.
+    async _eliminar(carnet, nombre) {
+        if (!confirm(`¿Eliminar a ${nombre || carnet} (${carnet})? Esta acción no se puede deshacer.`)) return;
+        try {
+            await API.fetchRaw(`/estudiantes/${encodeURIComponent(carnet)}`, { method: 'DELETE' });
+            await this.cargar();
+        } catch (e) { alert(e.message); }
+    },
+
     async _guardar() {
-        const carnet      = document.getElementById('est-carnet').value.trim();
+        const carnet      = document.getElementById('est-carnet').value.trim().toUpperCase();
         const nombre      = document.getElementById('est-nombre').value.trim();
         const carrera     = document.getElementById('est-carrera').value.trim();
         const facultad    = document.getElementById('est-facultad').value.trim();
@@ -137,7 +153,7 @@ const Estudiantes = {
                        fecha_nacimiento: fecha_nac||null, sexo: sexo||null };
         try {
             if (this._editCarnet) {
-                await API.fetchRaw(`/estudiantes/${this._editCarnet}`, { method: 'PUT', body });
+                await API.fetchRaw(`/estudiantes/${encodeURIComponent(this._editCarnet)}`, { method: 'PUT', body });
             } else {
                 await API.fetchRaw('/estudiantes', { method: 'POST', body });
             }

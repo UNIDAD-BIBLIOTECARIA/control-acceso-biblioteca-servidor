@@ -5,13 +5,16 @@ from .umbrales import calcular_estado
 
 
 def upsert_conexion(conn, pc_id, nombre, ultima_conexion, ip):
+    """Marca que la PC se comunicó con el servidor (lo usan /sync y el heartbeat
+    de /estado). `ultima_conexion` es lo que mira /reportes/pcs-activas. Un
+    nombre o IP ausentes en el payload no borran los que ya había."""
     conn.execute("""
         INSERT INTO pcs (pc_id, nombre, ultima_conexion, ip_reportada)
         VALUES (%s, %s, %s, %s)
         ON DUPLICATE KEY UPDATE
-            nombre = VALUES(nombre),
+            nombre = COALESCE(VALUES(nombre), nombre),
             ultima_conexion = VALUES(ultima_conexion),
-            ip_reportada = VALUES(ip_reportada)
+            ip_reportada = COALESCE(VALUES(ip_reportada), ip_reportada)
     """, (pc_id, nombre, ultima_conexion, ip))
 
 
@@ -86,8 +89,8 @@ def listar_mantenimiento():
 
     minutos_uso_desde_mantenimiento: tiempo de sesiones de estudiantes/invitados.
     horas_uso_acumuladas / estado_mantenimiento: tiempo real que la PC estuvo
-    encendida desde el último mantenimiento (lo que pide proyecto.md para las
-    alertas de 300h/400h), reportado por el agente de hardware del cliente."""
+    encendida desde el último mantenimiento (base de las alertas de
+    300h/400h), reportado por el agente de hardware del cliente."""
     with conexion() as conn:
         rows = conn.execute("""
             SELECT p.pc_id, p.nombre, p.ultima_conexion, p.ultimo_mantenimiento,
@@ -104,6 +107,12 @@ def listar_mantenimiento():
                 SELECT pc_id, hora_inicio, NULL AS hora_fin
                 FROM estado_pcs
                 WHERE sesion_activa = 1 AND hora_inicio IS NOT NULL
+                  -- Misma deduplicación que db/reportes.py: si la sesión en curso
+                  -- ya llegó a `sesiones` por /sync, no se cuenta dos veces.
+                  AND NOT EXISTS (
+                      SELECT 1 FROM sesiones sx
+                      WHERE sx.pc_id = estado_pcs.pc_id AND sx.hora_inicio = estado_pcs.hora_inicio
+                  )
             ) t ON t.pc_id = p.pc_id
                AND t.hora_inicio >= COALESCE(p.ultimo_mantenimiento, '1970-01-01 00:00:00')
             LEFT JOIN pcs_hardware h ON h.pc_id = p.pc_id

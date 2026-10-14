@@ -4,8 +4,8 @@ const Estadisticas = {
     async init() {
         await this._loadChartJs();
 
-        const hoy = new Date().toISOString().split('T')[0];
-        const hace7 = new Date(Date.now() - 6 * 86400000).toISOString().split('T')[0];
+        const hoy = fechaLocalISO();
+        const hace7 = fechaLocalISO(new Date(Date.now() - 6 * 86400000));
 
         document.getElementById('est-desde').value = hace7;
         document.getElementById('est-hasta').value = hoy;
@@ -15,7 +15,7 @@ const Estadisticas = {
                 document.querySelectorAll('.est-quick').forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
                 const dias = parseInt(btn.dataset.dias);
-                const desde = new Date(Date.now() - (dias - 1) * 86400000).toISOString().split('T')[0];
+                const desde = fechaLocalISO(new Date(Date.now() - (dias - 1) * 86400000));
                 document.getElementById('est-desde').value = desde;
                 document.getElementById('est-hasta').value = hoy;
                 this.cargar();
@@ -141,7 +141,7 @@ const Estadisticas = {
     _renderPorSexo(datos) {
         const colorMap = {
             'M': '#1A171B', 'F': '#8B0E13',
-            'Masculino': '#1A171B', 'Femenino': '#8B0E13',
+            'LGBTIQ+': '#D97706', 'N/D': '#696969',
             'No especificado': '#ABABAB',
         };
         const labels = datos.map(d => d.sexo);

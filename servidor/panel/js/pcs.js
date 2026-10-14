@@ -24,7 +24,7 @@ const PCs = {
         pcs.forEach(pc => {
             const estado = pc.estado_pc || (pc.sesion_activa ? 'en_uso' : 'disponible');
             const ultima = pc.ultima_actualizacion
-                ? new Date(pc.ultima_actualizacion + 'Z').toLocaleTimeString('es-GT', { hour: '2-digit', minute: '2-digit' })
+                ? fmtHora(pc.ultima_actualizacion)
                 : '—';
 
             const card = document.createElement('div');
