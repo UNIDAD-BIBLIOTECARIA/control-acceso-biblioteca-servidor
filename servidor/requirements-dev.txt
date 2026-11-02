@@ -3,7 +3,7 @@
 # requirements.txt porque los tests importan los módulos reales de la app
 # (routers/auth.py necesita fastapi, PyJWT, etc. para poder importarse).
 -r requirements.txt
-pytest==9.1.1
+pytest==9.2.0
 # fastapi.testclient.TestClient (tests/test_endpoints.py) delega en httpx para
 # armar los requests de prueba; FastAPI no la trae como dependencia directa.
 httpx==0.28.1
